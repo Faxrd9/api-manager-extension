@@ -2220,13 +2220,13 @@ export async function importProfiles(file, mode = 'merge') {
 
 function openPanel() {
     ensureManagerPanel();
-    $(UI.overlay).addClass('is-open').show();
+    $(UI.overlay).addClass('is-open').attr('aria-hidden', 'false').show();
     state.panelOpen = true;
     renderProfileList();
 }
 
 function closePanel() {
-    $(UI.overlay).removeClass('is-open').hide();
+    $(UI.overlay).removeClass('is-open').attr('aria-hidden', 'true').hide();
     state.panelOpen = false;
 }
 
@@ -2260,7 +2260,7 @@ function bindEvents() {
 
     $(document).on(`click${EVENT_NS}`, '#api-manager-close-btn', closePanel);
     $(document).on(`pointerdown${EVENT_NS}`, UI.overlay, (event) => {
-        if ($(event.target).closest(UI.panel).length === 0) {
+        if (event.target === event.currentTarget || $(event.target).closest(UI.panel).length === 0) {
             closePanel();
         }
     });
@@ -2345,8 +2345,8 @@ function bindEvents() {
 
 function buildPanelHtml() {
     return `
-        <div id="api-manager-overlay" class="api-manager-overlay" style="display:none;">
-            <div id="api-manager-panel" class="api-manager-panel">
+        <div id="api-manager-overlay" class="api-manager-overlay" aria-hidden="true">
+            <div id="api-manager-panel" class="api-manager-panel" role="dialog" aria-modal="true" aria-label="API 配置管理">
                 <div class="api-manager-header">
                     <div class="api-manager-title">API 配置管理</div>
                     <button type="button" id="api-manager-close-btn" class="menu_button api-manager-close-btn">×</button>
@@ -2408,19 +2408,10 @@ function syncFloatingTriggerState() {
     const $float = $(UI.floatingTrigger);
     if (!$float.length) return;
 
-    const { $host } = resolveApiPanelHost();
+    // 右侧避让统一交由 CSS（含 safe-area），避免 JS 注入固定像素值。
+    $float.css('right', '');
 
-    // 让浮动按钮尽量贴近 API 面板右侧，而不是死贴浏览器右侧
-    let rightOffset = 16;
-    if ($host && $host.length) {
-        const rect = $host.get(0)?.getBoundingClientRect?.();
-        if (rect && Number.isFinite(rect.right)) {
-            rightOffset = Math.max(12, Math.round(window.innerWidth - rect.right + 12));
-        }
-    }
-    $float.css('right', `max(${rightOffset}px, env(safe-area-inset-right, 12px))`);
-
-    // 始终保留悬浮入口，避免标题栏按钮被滚动出视口后“找不到入口”
+    // 始终保留悬浮入口，避免标题栏按钮被滚动出视口后“找不到入口”。
     $float.removeClass('is-hidden');
 }
 

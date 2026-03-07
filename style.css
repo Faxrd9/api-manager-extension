@@ -1,6 +1,15 @@
 :root {
     --element-height: 36px;
     --element-radius: 8px;
+    --layout-gap: 8px;
+    --control-min-width: 80px;
+}
+
+@media (max-width: 48rem), (max-height: 40rem) {
+    :root {
+        --element-height: 32px;
+        --element-radius: 7px;
+    }
 }
 
 .api-manager-panel-host {
@@ -19,11 +28,11 @@
     top: 8px;
     right: 10px;
     z-index: 5;
-    width: 34px;
-    min-width: 34px;
-    height: 34px;
+    width: var(--element-height);
+    min-width: var(--element-height);
+    height: var(--element-height);
     padding: 0;
-    border-radius: 8px;
+    border-radius: var(--element-radius);
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -38,8 +47,8 @@
     top: auto;
     right: auto;
     width: auto;
-    min-width: 84px;
-    height: 30px;
+    min-width: var(--control-min-width);
+    height: var(--element-height);
     padding: 0 10px;
     border-radius: 999px;
     display: inline-flex;
@@ -51,8 +60,8 @@
 .api-manager-trigger-fallback {
     z-index: 20;
     width: auto;
-    min-width: 84px;
-    height: 30px;
+    min-width: var(--control-min-width);
+    height: var(--element-height);
     padding: 0 10px;
     border-radius: 999px;
     display: inline-flex;
@@ -62,11 +71,12 @@
 
 .api-manager-trigger-floating {
     position: fixed;
-    top: 86px;
+    top: auto;
     right: 16px;
+    bottom: env(safe-area-inset-bottom, 20px);
     width: auto;
-    min-width: 92px;
-    height: 34px;
+    min-width: var(--control-min-width);
+    height: var(--element-height);
     padding: 0 12px;
     border-radius: 999px;
     z-index: 32000;
@@ -117,11 +127,11 @@
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    width: min(940px, 92vw);
-    max-height: 86vh;
+    width: min(95%, 1000px);
+    max-height: 85vh;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: var(--layout-gap);
     padding: 14px;
     border-radius: 12px;
     border: 1px solid var(--SmartThemeBorderColor);
@@ -133,6 +143,8 @@
     color: var(--SmartThemeBodyColor);
     box-shadow: 0 16px 36px rgb(from var(--black) r g b / 0.45);
     backdrop-filter: blur(var(--SmartThemeBlurStrength));
+    box-sizing: border-box;
+    overflow: hidden;
 }
 
 .api-manager-header {
@@ -149,20 +161,25 @@
 }
 
 .api-manager-close-btn {
-    width: 30px;
-    min-width: 30px;
-    height: 30px;
-    border-radius: 8px;
+    width: var(--element-height);
+    min-width: var(--element-height);
+    height: var(--element-height);
+    border-radius: var(--element-radius);
     padding: 0;
-    font-size: 18px;
+    font-size: calc(var(--element-height) * 0.5);
     line-height: 1;
 }
 
 .api-manager-toolbar {
-    display: grid;
-    grid-template-columns: 1fr 180px auto;
-    gap: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--layout-gap);
     align-items: center;
+}
+
+.api-manager-toolbar > * {
+    flex: 1 1 auto;
+    min-width: var(--control-min-width);
 }
 
 /* 注入到 API 设置面板内的轻量工具栏（搜索 + 导入/导出） */
@@ -171,7 +188,7 @@
     flex-direction: column;
     flex: 1 1 auto;
     align-self: stretch;
-    gap: 8px;
+    gap: var(--layout-gap);
     padding: 8px;
     margin: 6px 0;
     width: 100%;
@@ -264,13 +281,13 @@
     right: 12px;
     top: 50%;
     transform: translateY(-50%);
-    width: 22px;
-    height: 22px;
+    width: calc(var(--element-height) * 0.62);
+    height: calc(var(--element-height) * 0.62);
     border: 1px solid transparent;
     border-radius: 999px;
     background: transparent;
     color: rgb(from var(--text-color, var(--SmartThemeBodyColor)) r g b / 0.72);
-    font-size: 14px;
+    font-size: calc(var(--element-height) * 0.4);
     line-height: 1;
     padding: 0;
     cursor: pointer;
@@ -293,9 +310,9 @@
 .api-manager-injected-toolbar .api-manager-select-row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--layout-gap);
     width: 100%;
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
     min-height: var(--element-height);
     overflow: visible;
 }
@@ -334,9 +351,11 @@
 
 .api-manager-injected-toolbar .api-manager-button-group {
     display: flex;
-    flex: 0 0 auto;
+    flex: 1 1 auto;
     align-items: center;
-    gap: 8px;
+    gap: var(--layout-gap);
+    flex-wrap: wrap;
+    min-width: 0;
 }
 
 .api-manager-injected-toolbar .api-manager-button-group .menu_button {
@@ -348,13 +367,17 @@
     align-items: center;
     justify-content: center;
     box-sizing: border-box;
+    flex: 1 1 auto;
+    min-width: var(--control-min-width);
 }
 
 .api-manager-injected-toolbar .api-manager-native-actions {
     display: flex;
-    flex: 0 0 auto;
+    flex: 1 1 auto;
     align-items: center;
     gap: 4px;
+    flex-wrap: wrap;
+    min-width: 0;
 }
 
 .api-manager-injected-toolbar .api-manager-native-actions .menu_button {
@@ -414,12 +437,14 @@
     color: rgb(from var(--SmartThemeBodyColor) r g b / 0.72);
     font-size: 12px;
     text-align: right;
+    flex: 1 1 100%;
+    min-width: 0;
 }
 
 .api-manager-list {
-    flex: 1;
-    min-height: 180px;
-    max-height: 56vh;
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
     overflow: auto;
     display: flex;
     flex-direction: column;
@@ -512,7 +537,7 @@
 }
 
 .api-manager-card-actions .menu_button {
-    min-width: 72px;
+    min-width: var(--control-min-width);
     padding: 4px 9px;
     font-size: 12px;
 }
@@ -530,56 +555,50 @@
 }
 
 .api-manager-footer {
-    display: grid;
-    grid-template-columns: minmax(180px, 1fr) repeat(4, auto);
-    gap: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--layout-gap);
     align-items: center;
     padding-top: 8px;
     border-top: 1px solid rgb(from var(--SmartThemeBorderColor) r g b / 0.7);
 }
 
-@media (max-width: 900px) {
-    .api-manager-panel {
-        width: min(96vw, 920px);
-        max-height: 90vh;
-    }
+.api-manager-footer > * {
+    flex: 1 1 auto;
+    min-width: var(--control-min-width);
+}
 
-    .api-manager-toolbar {
-        grid-template-columns: 1fr 1fr;
+.api-manager-toolbar .menu_button,
+.api-manager-footer .menu_button,
+.api-manager-toolbar button,
+.api-manager-footer button {
+    min-width: var(--control-min-width);
+}
+
+@media (max-width: 48rem) {
+    .api-manager-panel {
+        width: min(95%, 1000px);
+        max-height: 85vh;
+        padding: 12px;
     }
 
     .api-manager-count {
-        grid-column: 1 / -1;
         text-align: left;
     }
 
-    .api-manager-footer {
-        grid-template-columns: 1fr 1fr;
-    }
-
-    .api-manager-footer > .menu_button {
-        width: 100%;
-    }
-
-    .api-manager-injected-toolbar .api-manager-select-row {
-        flex-wrap: nowrap;
+    .api-manager-toolbar > *,
+    .api-manager-footer > * {
+        flex: 1 1 100%;
     }
 
     .api-manager-injected-toolbar .api-manager-select-host,
     .api-manager-injected-toolbar .api-manager-button-group,
     .api-manager-injected-toolbar .api-manager-native-actions {
-        width: auto;
-    }
-
-    .api-manager-injected-toolbar .api-manager-button-group .menu_button {
-        flex: 0 0 auto;
-    }
-
-    .api-manager-injected-toolbar .api-manager-native-actions {
-        flex-wrap: nowrap;
-        justify-content: flex-end;
+        flex: 1 1 100%;
     }
 }
+
+
 
 
 
