@@ -1044,8 +1044,8 @@ function downloadJson(filename, data) {
 }
 
 const PRESET_DOM = {
-    toolbarId: 'api-manager-toolbar',
-    searchId: 'api-search-bar',
+    toolbarId: 'api-manager-injected-toolbar',
+    searchId: 'api-manager-preset-search',
     searchClearId: 'api-search-clear-btn',
     searchResultsId: 'api-manager-search-results',
     importButtonId: 'api-manager-import-btn',
@@ -1067,7 +1067,6 @@ const PRESET_SELECT_SELECTORS = [
 ];
 
 const PRESET_SELECT_EXPAND_MIN_ROWS = 1;
-const PRESET_SELECT_EXPAND_MAX_ROWS = 10;
 const PRESET_SEARCH_MAX_RESULTS = 8;
 const IO_CONTROL_SELECTORS = [
     '#api-manager-panel-export-btn',
@@ -1263,53 +1262,21 @@ function resolvePresetPanelHost() {
 function createPresetToolbar() {
     const toolbar = document.createElement('div');
     toolbar.id = PRESET_DOM.toolbarId;
-    toolbar.className = 'api-manager-toolbar api-manager-injected-toolbar';
+    toolbar.className = 'api-manager-injected-toolbar';
     toolbar.innerHTML = `
         <div class="api-manager-search-row">
             <input id="${PRESET_DOM.searchId}" type="search" placeholder="搜索配置..." />
             <button type="button" id="${PRESET_DOM.searchClearId}" class="api-manager-search-clear-btn" aria-label="清空搜索" title="清空搜索">×</button>
             <div id="${PRESET_DOM.searchResultsId}" class="api-manager-search-results" hidden></div>
         </div>
-        <div class="api-manager-select-row">
-            <div class="api-manager-select-host"></div>
-            <div class="api-manager-button-group">
-                <button type="button" id="${PRESET_DOM.importButtonId}" class="menu_button">导入</button>
-                <button type="button" id="${PRESET_DOM.exportButtonId}" class="menu_button">导出</button>
-            </div>
-            <div class="api-manager-native-actions"></div>
+        <div class="api-manager-toolbar-row">
+            <button type="button" id="${PRESET_DOM.importButtonId}" class="menu_button">导入</button>
+            <button type="button" id="${PRESET_DOM.exportButtonId}" class="menu_button">导出</button>
         </div>
         <input id="${PRESET_DOM.fileInputId}" type="file" accept=".json,application/json" hidden>
         <div id="${PRESET_DOM.statusId}" class="api-manager-status"></div>
     `;
     return toolbar;
-}
-
-function moveNativeActionButtonsIntoToolbar(select, toolbar) {
-    const nativeActionHost = toolbar.querySelector('.api-manager-native-actions');
-    if (!(nativeActionHost instanceof HTMLElement)) {
-        return;
-    }
-
-    const rowContainer = toolbar.parentElement;
-    if (!(rowContainer instanceof HTMLElement)) {
-        return;
-    }
-
-    const actionButtons = Array.from(rowContainer.children).filter((child) => {
-        if (!(child instanceof HTMLElement)) {
-            return false;
-        }
-
-        if (child === toolbar || child === select) {
-            return false;
-        }
-
-        return child.classList.contains('menu_button');
-    });
-
-    actionButtons.forEach((button) => {
-        nativeActionHost.appendChild(button);
-    });
 }
 
 function setPresetStatus(message, tone = 'info') {
@@ -1363,8 +1330,9 @@ function updatePresetSelectStatus(select, visibleCount = null, totalCount = null
         return;
     }
 
-    const allOptions = Array.from(select.options);
-    const shownCount = visibleCount ?? allOptions.filter((option) => !option.hidden).length;
+    const allOptions = Array.from(select.options)
+        .filter((option) => !option.disabled && String(option.value || '').trim() !== '');
+    const shownCount = visibleCount ?? allOptions.length;
     const allCount = totalCount ?? allOptions.length;
     const selectedText = String(select.selectedOptions?.[0]?.textContent || '').trim();
     const parts = [`显示 ${shownCount} / ${allCount} 条配置`];
@@ -1382,9 +1350,7 @@ function getFirstVisibleSelectablePresetOption(select) {
     }
 
     return Array.from(select.options).find((option) => (
-        !option.hidden
-        && option.style.display !== 'none'
-        && !option.disabled
+        !option.disabled
         && String(option.value || '').trim() !== ''
     )) || null;
 }
@@ -1543,45 +1509,42 @@ function applyPresetSearchFilter(select, keyword = state.searchKeyword, toolbar 
     }
 
     const normalizedKeyword = String(keyword || '').trim().toLowerCase();
-    let visibleCount = 0;
-    let totalCount = 0;
-    const matchedEntries = [];
+    const allEntries = Array.from(select.options)
+        .map((option, optionIndex) => ({
+            option,
+            optionIndex,
+            label: String(option.textContent || option.value || '').trim() || `配置 ${optionIndex + 1}`,
+            value: String(option.value || ''),
+        }))
+        .filter((entry) => !entry.option.disabled && entry.value.trim() !== '');
 
-    Array.from(select.options).forEach((option, optionIndex) => {
-        const text = String(option.textContent || '').trim().toLowerCase();
-        const valueText = String(option.value || '').trim().toLowerCase();
-        const matched = !normalizedKeyword || `${text} ${valueText}`.includes(normalizedKeyword);
+    const matchedEntries = normalizedKeyword
+        ? allEntries.filter((entry) => `${entry.label.toLowerCase()} ${entry.value.toLowerCase()}`.includes(normalizedKeyword))
+        : allEntries;
 
-        option.hidden = !matched;
-        option.style.display = matched ? '' : 'none';
-        option.classList.toggle('api-manager-hidden-option', !matched);
-
-        totalCount += 1;
-        if (matched) {
-            visibleCount += 1;
-
-            if (!option.disabled && String(option.value || '').trim() !== '') {
-                matchedEntries.push({
-                    optionIndex,
-                    label: String(option.textContent || option.value || '').trim() || `配置 ${optionIndex + 1}`,
-                });
-            }
-        }
-    });
+    const totalCount = allEntries.length;
+    const visibleCount = matchedEntries.length;
 
     if (normalizedKeyword && matchedEntries.length) {
-        const selectedIndex = Number(select.selectedIndex);
-        const hasMatchedSelection = matchedEntries.some((entry) => entry.optionIndex === selectedIndex);
+        const selectedValue = String(select.value || '');
+        const hasMatchedSelection = matchedEntries.some((entry) => entry.value === selectedValue);
 
         if (!hasMatchedSelection) {
-            select.selectedIndex = matchedEntries[0].optionIndex;
+            select.value = matchedEntries[0].value;
         }
     }
 
     syncPresetSelectPresentation(select);
-    renderPresetSearchResults(toolbar, normalizedKeyword, matchedEntries);
+    renderPresetSearchResults(
+        toolbar,
+        normalizedKeyword,
+        matchedEntries.map((entry) => ({
+            optionIndex: entry.optionIndex,
+            label: entry.label,
+        })),
+    );
 
-    updatePresetSelectStatus(select, visibleCount, totalCount);
+    updatePresetSelectStatus(select, normalizedKeyword ? visibleCount : totalCount, totalCount);
 
     if (normalizedKeyword && !matchedEntries.length) {
         setPresetStatus(`未找到匹配配置：${keyword}`, 'warning');
@@ -1988,29 +1951,29 @@ function ensurePresetToolbar() {
     const { element: panel } = resolvePresetPanelHost();
     const select = resolvePresetSelect(panel || document);
 
-    if (!(select instanceof HTMLSelectElement)) {
+    if (!(panel instanceof HTMLElement) || !(select instanceof HTMLSelectElement)) {
         return false;
     }
 
+    // 清理旧版本遗留工具栏，避免移动端出现重复节点导致的错位。
+    document.querySelectorAll('#api-manager-toolbar, .api-manager-injected-toolbar').forEach((node) => {
+        if (node.id !== PRESET_DOM.toolbarId) {
+            node.remove();
+        }
+    });
+
     let toolbar = document.getElementById(PRESET_DOM.toolbarId);
-    if (toolbar && panel && !panel.contains(toolbar)) {
+    if (toolbar && toolbar.parentElement !== panel) {
         toolbar.remove();
         toolbar = null;
     }
 
     if (!toolbar) {
         toolbar = createPresetToolbar();
-        select.parentElement?.insertBefore(toolbar, select);
+        panel.insertBefore(toolbar, panel.firstChild || null);
     }
 
     bindPresetToolbarEvents(toolbar);
-
-    const selectHost = toolbar.querySelector('.api-manager-select-host');
-    if (selectHost && select.parentElement !== selectHost) {
-        selectHost.appendChild(select);
-    }
-
-    moveNativeActionButtonsIntoToolbar(select, toolbar);
 
     bindPresetSelectEvents(select);
     applyPresetSearchFilter(select, state.searchKeyword, toolbar);

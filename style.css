@@ -72,7 +72,7 @@
 .api-manager-trigger-floating {
     position: fixed;
     top: auto;
-    right: 16px;
+    right: max(env(safe-area-inset-right, 12px), 12px);
     bottom: env(safe-area-inset-bottom, 20px);
     width: auto;
     min-width: var(--control-min-width);
@@ -186,21 +186,37 @@
 .api-manager-injected-toolbar {
     display: flex;
     flex-direction: column;
-    flex: 1 1 auto;
+    flex: 0 0 auto;
     align-self: stretch;
     gap: var(--layout-gap);
     padding: 8px;
     margin: 6px 0;
-    width: 100%;
+    width: auto;
+    min-width: 0;
+    max-width: 100%;
     box-sizing: border-box;
     border-radius: var(--element-radius);
     border: 1px solid var(--white10, rgb(from var(--white) r g b / 0.1));
     background: var(--main-background, rgb(from var(--black90a) r g b / 0.45));
+    overflow: visible;
+}
+
+.api-manager-injected-toolbar .api-manager-toolbar-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--layout-gap);
+    align-items: center;
+}
+
+.api-manager-injected-toolbar .api-manager-toolbar-row > * {
+    flex: 1 1 auto;
+    min-width: var(--control-min-width);
 }
 
 .api-manager-injected-toolbar .api-manager-search-row {
     position: relative;
     width: 100%;
+    min-width: 0;
     display: flex;
     align-items: center;
     min-height: var(--element-height);
@@ -208,18 +224,19 @@
     z-index: 12;
 }
 
-#api-search-bar {
+#api-manager-preset-search {
     background: var(--black75, var(--main-background));
     color: var(--text-color, var(--SmartThemeBodyColor));
     border: 1px solid var(--white10, rgb(from var(--white) r g b / 0.1));
     border-radius: 20px;
     width: 100%;
+    min-width: 0;
     height: var(--element-height);
     padding: 0 40px 0 16px;
     box-sizing: border-box;
 }
 
-#api-search-bar:focus {
+#api-manager-preset-search:focus {
     outline: none;
     border-color: var(--SmartThemeEmColor);
 }
@@ -307,58 +324,7 @@
     background: rgb(from var(--black) r g b / 0.18);
 }
 
-.api-manager-injected-toolbar .api-manager-select-row {
-    display: flex;
-    align-items: center;
-    gap: var(--layout-gap);
-    width: 100%;
-    flex-wrap: wrap;
-    min-height: var(--element-height);
-    overflow: visible;
-}
-
-.api-manager-injected-toolbar .api-manager-select-host {
-    flex: 1 1 auto;
-    min-width: 0;
-    position: relative;
-    height: var(--element-height);
-    min-height: var(--element-height);
-    overflow: visible;
-}
-
-.api-manager-injected-toolbar .api-manager-select-host select {
-    position: relative;
-    z-index: 1;
-    width: 100%;
-    height: var(--element-height);
-    min-height: var(--element-height);
-    border-radius: var(--element-radius);
-    box-sizing: border-box;
-}
-
-.api-manager-injected-toolbar .api-manager-select-host select.api-manager-select-expanded {
-    position: absolute;
-    top: calc(100% + 4px);
-    left: 0;
-    right: 0;
-    z-index: 40;
-    min-height: var(--element-height);
-    max-height: 280px;
-    overflow-y: auto;
-    white-space: normal;
-    background: var(--main-background, var(--black75));
-}
-
-.api-manager-injected-toolbar .api-manager-button-group {
-    display: flex;
-    flex: 1 1 auto;
-    align-items: center;
-    gap: var(--layout-gap);
-    flex-wrap: wrap;
-    min-width: 0;
-}
-
-.api-manager-injected-toolbar .api-manager-button-group .menu_button {
+.api-manager-injected-toolbar .menu_button {
     height: var(--element-height);
     padding: 0 12px;
     border-radius: var(--element-radius);
@@ -369,27 +335,6 @@
     box-sizing: border-box;
     flex: 1 1 auto;
     min-width: var(--control-min-width);
-}
-
-.api-manager-injected-toolbar .api-manager-native-actions {
-    display: flex;
-    flex: 1 1 auto;
-    align-items: center;
-    gap: 4px;
-    flex-wrap: wrap;
-    min-width: 0;
-}
-
-.api-manager-injected-toolbar .api-manager-native-actions .menu_button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: var(--element-height);
-    min-width: var(--element-height);
-    height: var(--element-height);
-    padding: 0;
-    border-radius: var(--element-radius);
-    box-sizing: border-box;
 }
 
 .api-manager-injected-toolbar .menu_button,
@@ -406,9 +351,33 @@
 #rm_api_block .api-manager-injected-toolbar,
 #api_connection_panel .api-manager-injected-toolbar,
 #main-API-selector-block .api-manager-injected-toolbar {
-    flex: 1 1 auto;
+    flex: 0 0 auto;
     min-width: 0;
-    max-width: none;
+    max-width: 100%;
+    overflow: visible;
+}
+
+#api_setup_main #api_setup_list,
+#rm_api_block #api_setup_list,
+#api_connection_panel #api_setup_list,
+#main-API-selector-block #api_setup_list,
+#api_setup_main #connection_profiles,
+#rm_api_block #connection_profiles,
+#api_connection_panel #connection_profiles,
+#main-API-selector-block #connection_profiles {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+}
+
+#api_setup_main .api-manager-toolbar,
+#rm_api_block .api-manager-toolbar,
+#api_connection_panel .api-manager-toolbar,
+#main-API-selector-block .api-manager-toolbar {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
 }
 
 #api-manager-status {
@@ -591,12 +560,12 @@
         flex: 1 1 100%;
     }
 
-    .api-manager-injected-toolbar .api-manager-select-host,
-    .api-manager-injected-toolbar .api-manager-button-group,
-    .api-manager-injected-toolbar .api-manager-native-actions {
+    .api-manager-injected-toolbar .api-manager-toolbar-row > * {
         flex: 1 1 100%;
     }
 }
+
+
 
 
 
