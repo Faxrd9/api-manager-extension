@@ -1,6 +1,13 @@
 :root {
     --element-height: 36px;
+    --element-height-compact: 32px;
     --element-radius: 8px;
+    --api-manager-panel-max-width: 1000px;
+    --api-manager-safe-bottom: env(safe-area-inset-bottom, 20px);
+    --api-manager-overlay-z: 33000;
+    --api-manager-panel-padding: 14px;
+    --api-manager-panel-gap: 10px;
+    --api-manager-control-gap: 8px;
 }
 
 .api-manager-panel-host {
@@ -62,11 +69,12 @@
 
 .api-manager-trigger-floating {
     position: fixed;
-    top: 86px;
-    right: 16px;
+    top: auto;
+    right: max(12px, env(safe-area-inset-right, 12px));
+    bottom: calc(var(--api-manager-safe-bottom) + 8px);
     width: auto;
-    min-width: 92px;
-    height: 34px;
+    min-width: max-content;
+    height: var(--element-height);
     padding: 0 12px;
     border-radius: 999px;
     z-index: 32000;
@@ -103,7 +111,7 @@
 .api-manager-overlay {
     position: fixed;
     inset: 0;
-    z-index: 27000;
+    z-index: var(--api-manager-overlay-z);
     background: rgb(from var(--black) r g b / 0.55);
     display: none;
 }
@@ -117,12 +125,12 @@
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    width: min(940px, 92vw);
-    max-height: 86vh;
+    width: min(95vw, var(--api-manager-panel-max-width));
+    max-height: 85vh;
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    padding: 14px;
+    gap: var(--api-manager-panel-gap);
+    padding: var(--api-manager-panel-padding);
     border-radius: 12px;
     border: 1px solid var(--SmartThemeBorderColor);
     background: linear-gradient(
@@ -133,6 +141,8 @@
     color: var(--SmartThemeBodyColor);
     box-shadow: 0 16px 36px rgb(from var(--black) r g b / 0.45);
     backdrop-filter: blur(var(--SmartThemeBlurStrength));
+    box-sizing: border-box;
+    overflow: hidden;
 }
 
 .api-manager-header {
@@ -159,10 +169,23 @@
 }
 
 .api-manager-toolbar {
-    display: grid;
-    grid-template-columns: 1fr 180px auto;
-    gap: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--api-manager-control-gap);
     align-items: center;
+}
+
+.api-manager-toolbar > :is(input, select, .menu_button, .api-manager-count) {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+#api-manager-search {
+    flex: 2 1 16rem;
+}
+
+#api-manager-sort {
+    flex: 1 1 11rem;
 }
 
 /* 注入到 API 设置面板内的轻量工具栏（搜索 + 导入/导出） */
@@ -171,8 +194,8 @@
     flex-direction: column;
     flex: 1 1 auto;
     align-self: stretch;
-    gap: 8px;
-    padding: 8px;
+    gap: var(--api-manager-control-gap);
+    padding: var(--api-manager-control-gap);
     margin: 6px 0;
     width: 100%;
     box-sizing: border-box;
@@ -293,7 +316,7 @@
 .api-manager-injected-toolbar .api-manager-select-row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--api-manager-control-gap);
     width: 100%;
     flex-wrap: nowrap;
     min-height: var(--element-height);
@@ -336,7 +359,7 @@
     display: flex;
     flex: 0 0 auto;
     align-items: center;
-    gap: 8px;
+    gap: var(--api-manager-control-gap);
 }
 
 .api-manager-injected-toolbar .api-manager-button-group .menu_button {
@@ -411,15 +434,16 @@
 }
 
 .api-manager-count {
+    flex: 1 1 100%;
     color: rgb(from var(--SmartThemeBodyColor) r g b / 0.72);
     font-size: 12px;
     text-align: right;
 }
 
 .api-manager-list {
-    flex: 1;
-    min-height: 180px;
-    max-height: 56vh;
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
     overflow: auto;
     display: flex;
     flex-direction: column;
@@ -530,56 +554,78 @@
 }
 
 .api-manager-footer {
-    display: grid;
-    grid-template-columns: minmax(180px, 1fr) repeat(4, auto);
-    gap: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--api-manager-control-gap);
     align-items: center;
     padding-top: 8px;
     border-top: 1px solid rgb(from var(--SmartThemeBorderColor) r g b / 0.7);
 }
 
-@media (max-width: 900px) {
-    .api-manager-panel {
-        width: min(96vw, 920px);
-        max-height: 90vh;
+.api-manager-toolbar .menu_button,
+.api-manager-footer .menu_button {
+    min-width: 80px;
+}
+
+.api-manager-footer > :is(input[type="text"], .menu_button) {
+    flex: 1 1 auto;
+}
+
+#api-manager-name {
+    flex: 2 1 16rem;
+    min-width: 12rem;
+}
+
+@media (max-width: 48rem), (max-height: 36rem) {
+    :root {
+        --element-height: var(--element-height-compact);
+        --api-manager-overlay-z: 42000;
+        --api-manager-panel-padding: 12px;
+        --api-manager-panel-gap: 8px;
+        --api-manager-control-gap: 6px;
     }
 
-    .api-manager-toolbar {
-        grid-template-columns: 1fr 1fr;
+    .api-manager-panel {
+        width: min(95vw, var(--api-manager-panel-max-width));
+        max-height: 85vh;
+    }
+
+    .api-manager-panel :is(input, select, textarea, button),
+    #api-search-bar {
+        font-size: max(16px, 1rem);
     }
 
     .api-manager-count {
-        grid-column: 1 / -1;
         text-align: left;
     }
 
-    .api-manager-footer {
-        grid-template-columns: 1fr 1fr;
-    }
-
-    .api-manager-footer > .menu_button {
-        width: 100%;
+    .api-manager-toolbar > :is(input, select, .menu_button, .api-manager-count),
+    .api-manager-footer > :is(input[type="text"], .menu_button) {
+        min-width: 100%;
     }
 
     .api-manager-injected-toolbar .api-manager-select-row {
-        flex-wrap: nowrap;
+        flex-wrap: wrap;
     }
 
     .api-manager-injected-toolbar .api-manager-select-host,
     .api-manager-injected-toolbar .api-manager-button-group,
     .api-manager-injected-toolbar .api-manager-native-actions {
-        width: auto;
+        width: 100%;
     }
 
     .api-manager-injected-toolbar .api-manager-button-group .menu_button {
-        flex: 0 0 auto;
+        flex: 1 1 auto;
+        min-width: 80px;
     }
 
     .api-manager-injected-toolbar .api-manager-native-actions {
-        flex-wrap: nowrap;
-        justify-content: flex-end;
+        flex-wrap: wrap;
+        justify-content: flex-start;
     }
 }
+
+
 
 
 
