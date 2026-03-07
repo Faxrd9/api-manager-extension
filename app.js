@@ -37,7 +37,6 @@ const SORT_OPTIONS = ['last_used', 'created_at', 'name'];
 const state = {
     initialized: false,
     panelOpen: false,
-    ioBusy: false,
     searchKeyword: '',
     sortBy: 'last_used',
     searchTimer: null,
@@ -162,17 +161,6 @@ const SUCCESS_TOKENS = [
     '成功',
     '已保存',
 ];
-
-const CRYPTO_CONFIG = {
-    schemaVersion: 1,
-    algorithm: 'AES-GCM',
-    kdf: 'PBKDF2',
-    hash: 'SHA-256',
-    iterations: 240000,
-    keyLength: 256,
-    saltLength: 16,
-    ivLength: 12,
-};
 
 function log(...args) {
     console.log(LOG_PREFIX, ...args);
@@ -330,180 +318,6 @@ function base64ToString(base64) {
     } catch (error) {
         return decodeURIComponent(escape(atob(base64)));
     }
-}
-
-function bytesToBase64(bytes) {
-    const source = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
-    let binary = '';
-
-    for (let index = 0; index < source.length; index += 1) {
-        binary += String.fromCharCode(source[index]);
-    }
-
-    return btoa(binary);
-}
-
-function base64ToBytes(base64) {
-    const binary = atob(String(base64 || ''));
-    const bytes = new Uint8Array(binary.length);
-
-    for (let index = 0; index < binary.length; index += 1) {
-        bytes[index] = binary.charCodeAt(index);
-    }
-
-    return bytes;
-}
-
-function hasWebCryptoSupport() {
-    return Boolean(globalThis.crypto?.subtle && typeof globalThis.crypto.getRandomValues === 'function');
-}
-
-async function deriveAesKeyFromPassword(password, saltBytes, usages = ['encrypt']) {
-    if (!hasWebCryptoSupport()) {
-        throw new Error('当前环境不支持 Web Crypto API');
-    }
-
-    const subtle = globalThis.crypto.subtle;
-    const encoder = new TextEncoder();
-    const passwordText = String(password || '');
-
-    const keyMaterial = await subtle.importKey(
-        'raw',
-        encoder.encode(passwordText),
-        { name: CRYPTO_CONFIG.kdf },
-        false,
-        ['deriveKey'],
-    );
-
-    return subtle.deriveKey(
-        {
-            name: CRYPTO_CONFIG.kdf,
-            salt: saltBytes,
-            iterations: CRYPTO_CONFIG.iterations,
-            hash: CRYPTO_CONFIG.hash,
-        },
-        keyMaterial,
-        { name: CRYPTO_CONFIG.algorithm, length: CRYPTO_CONFIG.keyLength },
-        false,
-        usages,
-    );
-}
-
-async function encryptPayloadWithPassword(payload, password) {
-    if (!hasWebCryptoSupport()) {
-        throw new Error('当前环境不支持 Web Crypto API，无法加密导出');
-    }
-
-    const subtle = globalThis.crypto.subtle;
-    const encoder = new TextEncoder();
-
-    const salt = globalThis.crypto.getRandomValues(new Uint8Array(CRYPTO_CONFIG.saltLength));
-    const iv = globalThis.crypto.getRandomValues(new Uint8Array(CRYPTO_CONFIG.ivLength));
-    const key = await deriveAesKeyFromPassword(password, salt, ['encrypt']);
-    const plainBuffer = encoder.encode(JSON.stringify(payload));
-    const cipherBuffer = await subtle.encrypt(
-        {
-            name: CRYPTO_CONFIG.algorithm,
-            iv,
-        },
-        key,
-        plainBuffer,
-    );
-
-    return {
-        format: 'api-manager-export',
-        version: CRYPTO_CONFIG.schemaVersion,
-        isEncrypted: true,
-        crypto: {
-            algorithm: CRYPTO_CONFIG.algorithm,
-            kdf: CRYPTO_CONFIG.kdf,
-            hash: CRYPTO_CONFIG.hash,
-            iterations: CRYPTO_CONFIG.iterations,
-            keyLength: CRYPTO_CONFIG.keyLength,
-        },
-        salt: bytesToBase64(salt),
-        iv: bytesToBase64(iv),
-        ciphertext: bytesToBase64(new Uint8Array(cipherBuffer)),
-    };
-}
-
-async function decryptPayloadWithPassword(encryptedPayload, password) {
-    if (!hasWebCryptoSupport()) {
-        throw new Error('当前环境不支持 Web Crypto API，无法解密导入');
-    }
-
-    const subtle = globalThis.crypto.subtle;
-    const decoder = new TextDecoder();
-
-    const saltBytes = base64ToBytes(encryptedPayload.salt);
-    const ivBytes = base64ToBytes(encryptedPayload.iv);
-    const cipherBytes = base64ToBytes(encryptedPayload.ciphertext);
-
-    const key = await deriveAesKeyFromPassword(password, saltBytes, ['decrypt']);
-    const plainBuffer = await subtle.decrypt(
-        {
-            name: CRYPTO_CONFIG.algorithm,
-            iv: ivBytes,
-        },
-        key,
-        cipherBytes,
-    );
-
-    const plainText = decoder.decode(plainBuffer);
-    return JSON.parse(plainText);
-}
-
-function isEncryptedExportPayload(payload) {
-    return Boolean(
-        payload
-        && typeof payload === 'object'
-        && payload.isEncrypted === true
-        && typeof payload.salt === 'string'
-        && typeof payload.iv === 'string'
-        && typeof payload.ciphertext === 'string',
-    );
-}
-
-function requestOptionalExportPassword() {
-    const shouldEncrypt = window.confirm('是否需要设置访问密码？\n点击“确定”将使用密码加密导出；点击“取消”则导出普通 JSON。');
-    if (!shouldEncrypt) {
-        return { cancelled: false, password: '' };
-    }
-
-    const firstInput = window.prompt('请输入访问密码（留空则导出普通 JSON）：', '');
-    if (firstInput === null) {
-        return { cancelled: true, password: '' };
-    }
-
-    const password = String(firstInput || '');
-    if (!password) {
-        return { cancelled: false, password: '' };
-    }
-
-    if (password.length < 6) {
-        throw new Error('访问密码至少需要 6 位');
-    }
-
-    const confirmInput = window.prompt('请再次输入访问密码：', '');
-    if (confirmInput === null) {
-        return { cancelled: true, password: '' };
-    }
-
-    if (password !== String(confirmInput || '')) {
-        throw new Error('两次输入的访问密码不一致');
-    }
-
-    return { cancelled: false, password };
-}
-
-function requestImportPassword() {
-    const input = window.prompt('检测到加密导出文件，请输入访问密码：', '');
-    if (input === null) {
-        return null;
-    }
-
-    const password = String(input || '');
-    return password || null;
 }
 
 function xorTransform(input, key) {
@@ -1069,12 +883,45 @@ const PRESET_SELECT_SELECTORS = [
 const PRESET_SELECT_EXPAND_MIN_ROWS = 1;
 const PRESET_SELECT_EXPAND_MAX_ROWS = 10;
 const PRESET_SEARCH_MAX_RESULTS = 8;
-const IO_CONTROL_SELECTORS = [
-    '#api-manager-panel-export-btn',
-    '#api-manager-import-merge-btn',
-    '#api-manager-import-replace-btn',
-    `#${PRESET_DOM.importButtonId}`,
-    `#${PRESET_DOM.exportButtonId}`,
+
+const PRESET_HINT_KEYS = [
+    'main_api',
+    'chat_completion_source',
+    'textgen_type',
+    'openai_reverse_proxy',
+    'custom_api_url_text',
+    'api_url_text',
+    'generic_api_url_text',
+    'api_key_openai',
+    'api_key_claude',
+    'api_key_openrouter',
+    'api_key_custom',
+    'api_key_scale',
+    'api_key_ai21',
+    'api_key_cohere',
+    'api_key_mistralai',
+    'api_key_groq',
+    'model_openai_select',
+    'model_claude_select',
+    'model_openrouter_select',
+    'model_custom_select',
+    'model_scale_select',
+    'model_ai21_select',
+    'custom_model_id',
+];
+
+const LEGACY_PROFILE_HINT_KEYS = [
+    'api_type',
+    'apiType',
+    'provider',
+    'url',
+    'baseUrl',
+    'base_url',
+    'key',
+    'apiKey',
+    'api_key',
+    'model',
+    'model_id',
 ];
 
 function isPlainObject(value) {
@@ -1113,6 +960,177 @@ function getPresetDisplayName(raw, fallback = '未命名配置') {
     }
 
     return fallback;
+}
+
+function selectorToSettingKey(selector) {
+    const raw = String(selector || '').trim();
+    if (!raw) return '';
+
+    if (raw.startsWith('#')) {
+        return raw.slice(1).trim();
+    }
+
+    return raw;
+}
+
+function pickSettingKeyFromSelectors(selectors, fallback = '') {
+    for (const selector of selectors || []) {
+        const key = selectorToSettingKey(selector);
+        if (key) {
+            return key;
+        }
+    }
+
+    return String(fallback || '').trim();
+}
+
+function hasAnyHintKey(raw, keys) {
+    if (!isPlainObject(raw) || !Array.isArray(keys) || keys.length === 0) {
+        return false;
+    }
+
+    return keys.some((key) => Object.prototype.hasOwnProperty.call(raw, key));
+}
+
+function isPresetLikeShape(raw) {
+    if (!isPlainObject(raw)) {
+        return false;
+    }
+
+    if (hasAnyHintKey(raw, PRESET_HINT_KEYS)) {
+        return true;
+    }
+
+    if (isPlainObject(raw.data) && hasAnyHintKey(raw.data, PRESET_HINT_KEYS)) {
+        return true;
+    }
+
+    return false;
+}
+
+function isLegacyProfileShape(raw) {
+    if (!isPlainObject(raw)) {
+        return false;
+    }
+
+    const hasLegacyHints = hasAnyHintKey(raw, LEGACY_PROFILE_HINT_KEYS);
+    const hasPresetHints = hasAnyHintKey(raw, PRESET_HINT_KEYS);
+    return hasLegacyHints && !hasPresetHints;
+}
+
+function convertLegacyProfileToPreset(raw, index = 0) {
+    const fallbackName = `兼容导入配置 ${index + 1}`;
+    const apiType = normalizeApiType(raw.api_type || raw.apiType || raw.provider || 'openai');
+    const meta = getApiMeta(apiType);
+
+    const urlField = pickSettingKeyFromSelectors(
+        [...meta.url, ...GENERIC_SELECTORS.url],
+        meta.mainApi === 'openai' ? 'openai_reverse_proxy' : `api_url_${apiType}`,
+    );
+    const keyField = pickSettingKeyFromSelectors(
+        [...meta.key, ...GENERIC_SELECTORS.key],
+        `api_key_${apiType}`,
+    );
+    const modelField = pickSettingKeyFromSelectors(
+        [...meta.model, ...GENERIC_SELECTORS.model],
+        `model_${apiType}_select`,
+    );
+
+    const url = String(raw.url || raw.baseUrl || raw.base_url || '').trim();
+    const key = decryptKey(String(raw.key || raw.apiKey || raw.api_key || '').trim());
+    const model = String(raw.model || raw.model_id || '').trim();
+
+    const preset = {
+        id: String(raw.id || ''),
+        name: getPresetDisplayName(raw, fallbackName),
+        main_api: meta.mainApi,
+        api_type: apiType,
+    };
+
+    if (meta.mainApi === 'openai' && meta.source) {
+        preset.chat_completion_source = meta.source;
+    } else if (meta.mainApi === 'textgenerationwebui') {
+        preset.textgen_type = meta.source || apiType;
+    }
+
+    if (url && urlField) {
+        preset[urlField] = url;
+    }
+
+    if (key && keyField) {
+        preset[keyField] = key;
+    }
+
+    if (model && modelField) {
+        preset[modelField] = model;
+        if (modelField.endsWith('_select')) {
+            preset[modelField.replace(/_select$/, '')] = model;
+        }
+    }
+
+    return preset;
+}
+
+function normalizeImportedEntries(imported) {
+    let convertedLegacyCount = 0;
+    let skippedCount = 0;
+
+    const entries = imported.entries
+        .map((entry, index) => {
+            if (!entry || !isPlainObject(entry.raw)) {
+                skippedCount += 1;
+                return null;
+            }
+
+            let raw = deepClone(entry.raw);
+
+            if (isLegacyProfileShape(raw)) {
+                raw = convertLegacyProfileToPreset(raw, index);
+                convertedLegacyCount += 1;
+            } else if (isPlainObject(raw.data) && isLegacyProfileShape(raw.data)) {
+                raw = {
+                    ...raw,
+                    data: convertLegacyProfileToPreset(raw.data, index),
+                };
+
+                if (!raw.name && raw.data?.name) {
+                    raw.name = raw.data.name;
+                }
+
+                convertedLegacyCount += 1;
+            }
+
+            if (!isPresetLikeShape(raw)) {
+                skippedCount += 1;
+                return null;
+            }
+
+            const fallbackName = getPresetDisplayName(raw, getPresetDisplayName(raw.data, `配置 ${index + 1}`));
+            const resolvedName = String(entry.name || '').trim() || fallbackName;
+            const resolvedKey = String(
+                entry.key
+                || raw.id
+                || raw.name
+                || raw.data?.id
+                || raw.data?.name
+                || index,
+            ).trim() || String(index);
+
+            return {
+                ...entry,
+                key: resolvedKey,
+                name: resolvedName,
+                raw,
+            };
+        })
+        .filter(Boolean);
+
+    return {
+        ...imported,
+        entries,
+        convertedLegacyCount,
+        skippedCount,
+    };
 }
 
 function normalizeArrayPresetEntries(arrayValue) {
@@ -1320,29 +1338,6 @@ function setPresetStatus(message, tone = 'info') {
 
     status.textContent = String(message || '');
     status.dataset.state = tone;
-}
-
-function syncIoBusyControls() {
-    const busy = Boolean(state.ioBusy);
-
-    IO_CONTROL_SELECTORS.forEach((selector) => {
-        document.querySelectorAll(selector).forEach((node) => {
-            const control = /** @type {any} */ (node);
-            if (typeof control.disabled === 'boolean') {
-                control.disabled = busy;
-            }
-            node.setAttribute('aria-busy', busy ? 'true' : 'false');
-        });
-    });
-}
-
-function setIoBusy(nextBusy, message = '') {
-    state.ioBusy = Boolean(nextBusy);
-    syncIoBusyControls();
-
-    if (message) {
-        setPresetStatus(message, 'info');
-    }
 }
 
 function getPresetOptionValue(descriptor, entry, index) {
@@ -2046,12 +2041,7 @@ async function waitForPresetEnvironmentReady(timeoutMs = 12000) {
 /**
  * 导出配置 JSON
  */
-export async function exportProfiles() {
-    if (state.ioBusy) {
-        toast('warning', '正在处理导入/导出任务，请稍候...');
-        return;
-    }
-
+export function exportProfiles() {
     try {
         const descriptor = getPresetDescriptor();
         if (!descriptor) {
@@ -2072,39 +2062,11 @@ export async function exportProfiles() {
                 : null,
             api_presets: deepClone(descriptor.rawValue),
         };
-
-        const { cancelled, password } = requestOptionalExportPassword();
-        if (cancelled) {
-            setPresetStatus('已取消导出', 'warning');
-            toast('warning', '已取消导出');
-            return;
-        }
-
-        const useEncryption = Boolean(password);
-        if (useEncryption && !hasWebCryptoSupport()) {
-            throw new Error('当前环境不支持 Web Crypto API，无法执行密码加密导出');
-        }
-
-        setIoBusy(true, useEncryption ? '正在加密导出，请稍候...' : '正在导出配置，请稍候...');
-
-        const finalPayload = useEncryption
-            ? await encryptPayloadWithPassword(payload, password)
-            : payload;
-
-        const filename = useEncryption
-            ? `api-presets-encrypted-${Date.now()}.json`
-            : `api-presets-${Date.now()}.json`;
-
-        downloadJson(filename, finalPayload);
-        setPresetStatus(useEncryption ? '加密导出成功' : '导出成功', 'success');
-        toast('success', useEncryption ? '配置已加密导出成功' : '配置导出成功');
+        downloadJson(`api-presets-${Date.now()}.json`, payload);
+        toast('success', '配置导出成功');
     } catch (error) {
         logError('导出配置失败', error);
-        const message = error?.message || error;
-        setPresetStatus(`导出失败：${message}`, 'error');
-        toast('error', `导出失败：${message}`);
-    } finally {
-        setIoBusy(false);
+        toast('error', `导出失败：${error.message || error}`);
     }
 }
 
@@ -2141,14 +2103,8 @@ export async function importProfiles(file, mode = 'merge') {
         return;
     }
 
-    if (state.ioBusy) {
-        toast('warning', '正在处理导入/导出任务，请稍候...');
-        return;
-    }
-
     try {
         if (!window.confirm('导入前建议先导出当前配置作为备份，是否继续导入？')) {
-            setPresetStatus('已取消导入', 'warning');
             return;
         }
 
@@ -2157,29 +2113,15 @@ export async function importProfiles(file, mode = 'merge') {
             throw new Error('未找到可写入的 API 配置存储');
         }
 
-        setIoBusy(true, '正在读取导入文件，请稍候...');
-
         const text = await file.text();
-        let parsed = JSON.parse(text);
+        const parsed = JSON.parse(text);
+        const importedRaw = normalizeImportedPresetPayload(parsed);
+        const imported = normalizeImportedEntries(importedRaw);
 
-        if (isEncryptedExportPayload(parsed)) {
-            const password = requestImportPassword();
-            if (!password) {
-                setPresetStatus('已取消导入', 'warning');
-                toast('warning', '未输入访问密码，已取消导入');
-                return;
-            }
-
-            setPresetStatus('正在解密导入文件，请稍候...', 'info');
-            try {
-                parsed = await decryptPayloadWithPassword(parsed, password);
-            } catch (decryptError) {
-                throw new Error('密码错误或文件损坏');
-            }
+        if (!imported.entries.length) {
+            throw new Error('导入文件中未检测到可用的 API 预设配置');
         }
 
-        setPresetStatus('正在校验并导入配置，请稍候...', 'info');
-        const imported = normalizeImportedPresetPayload(parsed);
         const normalizedMode = mode === 'replace' ? 'replace' : 'merge';
         let importedCount = 0;
 
@@ -2206,36 +2148,36 @@ export async function importProfiles(file, mode = 'merge') {
         }
 
         const modeText = normalizedMode === 'replace' ? '替换' : '合并';
-        setPresetStatus(`${modeText}导入 ${importedCount} 条配置`, 'success');
-        toast('success', `导入完成（${modeText}）：${importedCount} 条配置`);
+        const detailParts = [];
+
+        if (imported.convertedLegacyCount > 0) {
+            detailParts.push(`兼容转换 ${imported.convertedLegacyCount} 条旧版配置`);
+        }
+
+        if (imported.skippedCount > 0) {
+            detailParts.push(`跳过 ${imported.skippedCount} 条无效项`);
+        }
+
+        const detailText = detailParts.length ? `（${detailParts.join('，')}）` : '';
+        setPresetStatus(`${modeText}导入 ${importedCount} 条配置${detailText}`, 'success');
+        toast('success', `导入完成（${modeText}）：${importedCount} 条配置${detailText}`);
     } catch (error) {
         logError('导入配置失败', error);
-        const message = error?.message || error;
-        toast('error', `导入失败：${message}`);
-        setPresetStatus(`导入失败：${message}`, 'error');
-    } finally {
-        setIoBusy(false);
+        toast('error', `导入失败：${error.message || error}`);
+        setPresetStatus(`导入失败：${error.message || error}`, 'error');
     }
 }
 
 function openPanel() {
-    ensureManagerPanel();
     $(UI.overlay).addClass('is-open').show();
-    state.panelOpen = true;
     renderProfileList();
 }
 
 function closePanel() {
     $(UI.overlay).removeClass('is-open').hide();
-    state.panelOpen = false;
 }
 
 function openImportDialog(mode) {
-    if (state.ioBusy) {
-        toast('warning', '正在处理导入/导出任务，请稍候...');
-        return;
-    }
-
     state.importMode = mode === 'replace' ? 'replace' : 'merge';
     $(UI.importInput).val('');
     $(UI.importInput).trigger('click');
@@ -2259,8 +2201,8 @@ function bindEvents() {
     });
 
     $(document).on(`click${EVENT_NS}`, '#api-manager-close-btn', closePanel);
-    $(document).on(`pointerdown${EVENT_NS}`, UI.overlay, (event) => {
-        if ($(event.target).closest(UI.panel).length === 0) {
+    $(document).on(`click${EVENT_NS}`, UI.overlay, (event) => {
+        if (event.target.id === 'api-manager-overlay') {
             closePanel();
         }
     });
@@ -2297,7 +2239,7 @@ function bindEvents() {
         saveCurrentAsProfile();
     });
 
-    $(document).on(`click${EVENT_NS}`, '#api-manager-panel-export-btn', () => {
+    $(document).on(`click${EVENT_NS}`, '#api-manager-export-btn', () => {
         exportProfiles();
     });
 
@@ -2367,7 +2309,7 @@ function buildPanelHtml() {
                 <div class="api-manager-footer">
                     <input id="api-manager-name" class="text_pole" type="text" placeholder="配置名称（留空自动命名）" />
                     <button type="button" id="api-manager-save-current-btn" class="menu_button">保存当前</button>
-                    <button type="button" id="api-manager-panel-export-btn" class="menu_button">导出</button>
+                    <button type="button" id="api-manager-export-btn" class="menu_button">导出</button>
                     <button type="button" id="api-manager-import-merge-btn" class="menu_button">导入(合并)</button>
                     <button type="button" id="api-manager-import-replace-btn" class="menu_button">导入(替换)</button>
                     <input id="api-manager-import-input" type="file" accept=".json,application/json" hidden>
@@ -2375,22 +2317,6 @@ function buildPanelHtml() {
             </div>
         </div>
     `;
-}
-
-function ensureManagerPanel() {
-    if (!document.body) {
-        return false;
-    }
-
-    const hasOverlay = $(UI.overlay).length > 0;
-    const hasPanel = $(UI.panel).length > 0;
-    if (hasOverlay && hasPanel) {
-        return true;
-    }
-
-    $(UI.overlay).remove();
-    $('body').append(buildPanelHtml());
-    return true;
 }
 
 function ensureFloatingTrigger() {
@@ -2418,7 +2344,7 @@ function syncFloatingTriggerState() {
             rightOffset = Math.max(12, Math.round(window.innerWidth - rect.right + 12));
         }
     }
-    $float.css('right', `max(${rightOffset}px, env(safe-area-inset-right, 12px))`);
+    $float.css('right', `${rightOffset}px`);
 
     // 始终保留悬浮入口，避免标题栏按钮被滚动出视口后“找不到入口”
     $float.removeClass('is-hidden');
@@ -2473,19 +2399,13 @@ function resolveApiPanelHost() {
  * 在 API 设置区注入入口按钮和管理面板（兼容多个酒馆版本）
  */
 export function injectUI() {
-    const panelReady = ensureManagerPanel();
-    ensureFloatingTrigger();
-    bindEvents();
-    syncFloatingTriggerState();
-
     const injected = ensurePresetToolbar();
-
     if (injected) {
         const { selector } = resolvePresetPanelHost();
         log('已注入 API 搜索/导入导出工具栏，宿主：', selector || '(unknown)');
     }
 
-    return panelReady || injected;
+    return injected;
 }
 
 function startReinjectWatcher() {
