@@ -4,9 +4,14 @@
     "loading_order": 10,
     "requires": [],
     "optional": [],
-    "version": "1.0.0",
+    "version": "2.1.0",
     "description": "在 API 设置页注入搜索/导入/导出工具栏",
-    "author": "Faxrd9 (feat. 听话的 ChatGPT, 又爱又恨的 Gemini)",
-    "js": "index.js",
-    "css": "style.css"
+    "author": "Faxrd9 (feat. 听话的 ChatGPT, 又爱又恨的聪明Gemini)",
+    "js": [
+        "index.js"
+    ],
+    "css": [
+        "style.css"
+    ],
+    "entryPoint": "index.js"
 }

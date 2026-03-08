@@ -682,16 +682,671 @@ function detectCurrentApiType() {
     return mainApi || 'openai';
 }
 
+function readSettingsValue(settingsStore, fields, options = {}) {
+    const { nonEmptyOnly = false } = options;
+
+    if (!settingsStore || typeof settingsStore !== 'object') {
+        return '';
+    }
+
+    for (const field of fields) {
+        if (!field) continue;
+
+        const rawValue = settingsStore[field];
+        if (rawValue === undefined || rawValue === null) continue;
+
+        const value = String(rawValue).trim();
+        if (nonEmptyOnly && !value) continue;
+        return value;
+    }
+
+    return '';
+}
+
+function resolveTypeKeyFromRuntime(apiType) {
+    const getTypeKey = globalAny.getTypeKey || globalThis.getTypeKey;
+    if (typeof getTypeKey !== 'function') {
+        return '';
+    }
+
+    const normalizedType = normalizeApiType(apiType);
+    const argCandidates = [
+        [],
+        [normalizedType],
+        [`api_key_${normalizedType}`],
+    ];
+
+    if (normalizedType === 'custom') {
+        argCandidates.unshift(
+            ['custom'],
+            ['api_key_custom'],
+        );
+    }
+
+    for (const args of argCandidates) {
+        try {
+            const value = getTypeKey(...args);
+            if (typeof value === 'string' && value.trim()) {
+                return value.trim();
+            }
+        } catch (error) {
+            // 兼容不同版本 getTypeKey 的参数签名，失败时继续尝试。
+        }
+    }
+
+    return '';
+}
+
+function resolveConfigFromSettings(apiType) {
+    const normalizedType = normalizeApiType(apiType);
+    const settingsStore = getSettingsStore();
+
+    const rawKey = readSettingsValue(
+        settingsStore,
+        normalizedType === 'custom'
+            ? ['api_key_custom']
+            : [`api_key_${normalizedType}`],
+    );
+
+    let key = resolveTypeKeyFromRuntime(normalizedType)
+        || rawKey;
+
+    if (normalizedType === 'custom' && rawKey) {
+        const plainCustomKey = resolvePlainTextCustomKey(rawKey);
+        if (plainCustomKey) {
+            key = plainCustomKey;
+        }
+    }
+
+    const url = readSettingsValue(
+        settingsStore,
+        normalizedType === 'custom'
+            ? ['api_url_custom']
+            : [`api_url_${normalizedType}`, `${normalizedType}_api_url`],
+        { nonEmptyOnly: true },
+    );
+
+    return { key, url };
+}
+
+function getSecretsStore() {
+    const secretsStore = window?.secrets || globalAny.secrets || globalThis.secrets;
+    if (secretsStore && typeof secretsStore === 'object') {
+        return secretsStore;
+    }
+
+    return null;
+}
+
+async function getRealSecret(id) {
+    const secretId = String(id || '').trim();
+    if (!secretId) {
+        return null;
+    }
+
+    // 1. 尝试全自动：从酒馆内存抓取
+    const stSecrets = window?.secrets || globalThis.secrets || {};
+    if (stSecrets[secretId] && stSecrets[secretId].length > 15) {
+        return stSecrets[secretId];
+    }
+
+    // 2. 尝试缓存：从插件 localStorage 抓取
+    const cached = localStorage.getItem(`faxrd9_key_${secretId}`);
+    if (cached) {
+        return cached;
+    }
+
+    return null; // 抓不到，标记为需要手动补全
+}
+
+function isSecretIdField(fieldName) {
+    const name = String(fieldName || '').trim();
+    return ['secret-id', 'secret_id', 'secretId', 'api_key_custom'].includes(name);
+}
+
+function shouldTreatAsSecretId(fieldName, value) {
+    const text = String(value || '').trim();
+    if (!text) {
+        return false;
+    }
+
+    if (fieldName === 'api_key_custom') {
+        return isLikelySecretId(text);
+    }
+
+    return true;
+}
+
+function dedupeMissingSecretRefs(missingRefs = []) {
+    const map = new Map();
+
+    missingRefs.forEach((item) => {
+        const secretId = String(item?.secretId || '').trim();
+        if (!secretId) {
+            return;
+        }
+
+        if (!map.has(secretId)) {
+            map.set(secretId, {
+                secretId,
+                names: new Set(),
+                fields: new Set(),
+            });
+        }
+
+        const current = map.get(secretId);
+        current.names.add(String(item?.presetName || '未命名配置').trim() || '未命名配置');
+        current.fields.add(String(item?.field || 'secret-id').trim() || 'secret-id');
+    });
+
+    return Array.from(map.values()).map((item) => ({
+        secretId: item.secretId,
+        names: Array.from(item.names),
+        fields: Array.from(item.fields),
+    }));
+}
+
+async function requestManualSecretsBeforeExport(missingRefs = []) {
+    const refs = dedupeMissingSecretRefs(missingRefs);
+    if (!refs.length) {
+        return true;
+    }
+
+    return new Promise((resolve) => {
+        const existing = document.getElementById('api-manager-secret-fill-overlay');
+        if (existing) {
+            existing.remove();
+        }
+
+        const overlay = document.createElement('div');
+        overlay.id = 'api-manager-secret-fill-overlay';
+        overlay.style.cssText = [
+            'position:fixed',
+            'inset:0',
+            'background:rgba(0,0,0,.55)',
+            'z-index:99999',
+            'display:flex',
+            'align-items:center',
+            'justify-content:center',
+            'padding:12px',
+        ].join(';');
+
+        const panel = document.createElement('div');
+        panel.style.cssText = [
+            'width:min(92vw,640px)',
+            'max-height:85vh',
+            'overflow:auto',
+            'background:var(--SmartThemeBlurTintColor, #1f1f1f)',
+            'border:1px solid var(--SmartThemeBorderColor, #444)',
+            'border-radius:10px',
+            'padding:14px',
+            'color:var(--SmartThemeBodyColor, #fff)',
+            'box-shadow:0 10px 30px rgba(0,0,0,.35)',
+        ].join(';');
+
+        const rows = refs.map((item, index) => {
+            const title = item.names.join(' / ');
+            const fieldText = item.fields.join(', ');
+
+            return `
+                <div style="padding:10px 0;border-bottom:1px dashed rgba(255,255,255,.15)">
+                    <div style="font-size:13px;opacity:.9;margin-bottom:6px;">#${index + 1} ${escapeHtml(title)}</div>
+                    <div style="font-size:12px;opacity:.75;margin-bottom:8px;">字段：${escapeHtml(fieldText)} ｜ secret-id：${escapeHtml(item.secretId)}</div>
+                    <input
+                        type="text"
+                        data-secret-id="${escapeHtml(item.secretId)}"
+                        class="text_pole"
+                        style="width:100%;box-sizing:border-box;"
+                        placeholder="请输入该项明文 API Key"
+                    />
+                </div>
+            `;
+        }).join('');
+
+        panel.innerHTML = `
+            <div style="font-size:16px;font-weight:600;margin-bottom:8px;">导出前需补全密钥</div>
+            <div style="font-size:13px;opacity:.85;line-height:1.5;margin-bottom:10px;">
+                检测到 ${refs.length} 项密钥无法自动解密。请填写后再导出（支持手机粘贴）。
+            </div>
+            ${rows}
+            <div style="display:flex;gap:8px;justify-content:flex-end;padding-top:12px;">
+                <button type="button" id="api-manager-secret-fill-cancel" class="menu_button">取消导出</button>
+                <button type="button" id="api-manager-secret-fill-save" class="menu_button">保存并继续导出</button>
+            </div>
+        `;
+
+        overlay.appendChild(panel);
+        document.body.appendChild(overlay);
+
+        const cleanup = () => {
+            overlay.remove();
+        };
+
+        const cancelButton = panel.querySelector('#api-manager-secret-fill-cancel');
+        const saveButton = panel.querySelector('#api-manager-secret-fill-save');
+
+        cancelButton?.addEventListener('click', () => {
+            cleanup();
+            resolve(false);
+        });
+
+        saveButton?.addEventListener('click', () => {
+            const inputs = Array.from(panel.querySelectorAll('input[data-secret-id]'));
+            const emptyIds = [];
+
+            for (const input of inputs) {
+                const secretId = String(input.getAttribute('data-secret-id') || '').trim();
+                const value = String(input.value || '').trim();
+
+                if (!secretId || !value) {
+                    if (secretId) {
+                        emptyIds.push(secretId);
+                    }
+                    continue;
+                }
+
+                localStorage.setItem(`faxrd9_key_${secretId}`, value);
+            }
+
+            if (emptyIds.length > 0) {
+                toast('warning', `还有 ${emptyIds.length} 项密钥未填写，无法导出`);
+                return;
+            }
+
+            cleanup();
+            resolve(true);
+        });
+    });
+}
+
+const SECRET_REFERENCE_PREFIX = '__API_MANAGER_SECRET_REF__:';
+
+function buildSecretReferencePlaceholder({
+    key = 'api_key_custom',
+    secretId = '',
+    source = 'settings.api_key_custom',
+} = {}) {
+    const payload = {
+        schema: 'api-manager-secret-reference',
+        version: 1,
+        key: String(key || 'api_key_custom'),
+        secret_id: String(secretId || ''),
+        manual_input_required: true,
+        source: String(source || 'settings.api_key_custom'),
+    };
+
+    return `${SECRET_REFERENCE_PREFIX}${encodeURIComponent(JSON.stringify(payload))}`;
+}
+
+function parseSecretReferencePlaceholder(value) {
+    const text = String(value || '').trim();
+    if (!text.startsWith(SECRET_REFERENCE_PREFIX)) {
+        return null;
+    }
+
+    try {
+        const encoded = text.slice(SECRET_REFERENCE_PREFIX.length);
+        const json = decodeURIComponent(encoded);
+        const parsed = JSON.parse(json);
+
+        if (!parsed || typeof parsed !== 'object') {
+            return null;
+        }
+
+        if (parsed.schema !== 'api-manager-secret-reference') {
+            return null;
+        }
+
+        return {
+            key: String(parsed.key || 'api_key_custom'),
+            secret_id: String(parsed.secret_id || ''),
+            manual_input_required: Boolean(parsed.manual_input_required),
+            source: String(parsed.source || 'settings.api_key_custom'),
+        };
+    } catch (error) {
+        return null;
+    }
+}
+
+function getRequestHeadersSafe() {
+    const getRequestHeaders = globalAny.getRequestHeaders || globalThis.getRequestHeaders;
+
+    if (typeof getRequestHeaders === 'function') {
+        try {
+            const headers = getRequestHeaders();
+            if (headers && typeof headers === 'object') {
+                return headers;
+            }
+        } catch (error) {
+            // 忽略并使用兜底头
+        }
+    }
+
+    return {
+        'Content-Type': 'application/json',
+    };
+}
+
+async function findSecretValueByApi(key, id = '') {
+    const secretKey = String(key || '').trim();
+    if (!secretKey) {
+        return '';
+    }
+
+    const payload = { key: secretKey };
+    const secretId = String(id || '').trim();
+
+    if (secretId) {
+        payload.id = secretId;
+    }
+
+    try {
+        const response = await fetch('/api/secrets/find', {
+            method: 'POST',
+            headers: getRequestHeadersSafe(),
+            body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) {
+            return '';
+        }
+
+        const data = await response.json();
+        return typeof data?.value === 'string'
+            ? String(data.value).trim()
+            : '';
+    } catch (error) {
+        return '';
+    }
+}
+
+async function getSecretValue(id) {
+    const rawId = String(id ?? '').trim();
+    if (!rawId) {
+        return '';
+    }
+
+    const runtimeKey = resolveTypeKeyFromRuntime('custom');
+    if (runtimeKey && runtimeKey !== rawId && !isLikelySecretId(runtimeKey)) {
+        return runtimeKey;
+    }
+
+    try {
+        const secretsStore = getSecretsStore();
+        if (secretsStore && typeof secretsStore === 'object') {
+            const byId = secretsStore[rawId];
+            if (typeof byId === 'string' && byId.trim()) {
+                return byId.trim();
+            }
+
+            const byCustomField = secretsStore.api_key_custom;
+            if (typeof byCustomField === 'string' && byCustomField.trim()) {
+                return byCustomField.trim();
+            }
+        }
+    } catch (error) {
+        logError('读取 secrets 失败，回退原始 ID', error);
+    }
+
+    const fromSecretId = await findSecretValueByApi('api_key_custom', rawId);
+    if (fromSecretId && fromSecretId !== rawId) {
+        return fromSecretId;
+    }
+
+    if (isLikelySecretId(rawId)) {
+        const fromActive = await findSecretValueByApi('api_key_custom');
+        if (fromActive && fromActive !== rawId) {
+            return fromActive;
+        }
+    }
+
+    return rawId;
+}
+
+function isLikelySecretId(value) {
+    const text = String(value || '').trim();
+    if (!text) return false;
+
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(text);
+    const isSecretToken = /^secret[-_:]/i.test(text) || /secret[-_]?id/i.test(text);
+    const isNumericIndex = /^\d+$/.test(text);
+
+    return isUuid || isSecretToken || isNumericIndex;
+}
+
+function resolvePlainTextCustomKey(rawValue = '') {
+    const rawText = String(rawValue || '').trim();
+    const secretsStore = getSecretsStore();
+    const byTypeKeyRaw = resolveTypeKeyFromRuntime('custom');
+    const byTypeKey = isLikelySecretId(byTypeKeyRaw)
+        ? ''
+        : String(byTypeKeyRaw || '').trim();
+
+    const byFieldName = typeof secretsStore?.api_key_custom === 'string'
+        ? String(secretsStore.api_key_custom).trim()
+        : '';
+
+    const bySecretId = rawText && typeof secretsStore?.[rawText] === 'string'
+        ? String(secretsStore[rawText]).trim()
+        : '';
+
+    return byFieldName || bySecretId || byTypeKey || rawText;
+}
+
+async function replaceSecretManagedCustomKeyInExportPayload(apiPresets) {
+    let replacedCount = 0;
+    const pendingTargets = [];
+
+    const walk = (node, presetName = '未命名配置') => {
+        if (!node || typeof node !== 'object') {
+            return;
+        }
+
+        if (Array.isArray(node)) {
+            node.forEach((item, index) => {
+                walk(item, `${presetName}#${index + 1}`);
+            });
+            return;
+        }
+
+        const nodeName = getPresetDisplayName(node, presetName);
+
+        for (const [field, value] of Object.entries(node)) {
+            if (typeof value === 'string' && isSecretIdField(field) && shouldTreatAsSecretId(field, value)) {
+                const secretId = String(value || '').trim();
+                if (secretId) {
+                    pendingTargets.push({
+                        host: node,
+                        field,
+                        secretId,
+                        presetName: nodeName,
+                    });
+                }
+            }
+
+            if (value && typeof value === 'object') {
+                walk(value, nodeName);
+            }
+        }
+    };
+
+    walk(apiPresets, '配置');
+
+    const uniqueSecretIds = Array.from(new Set(pendingTargets.map((item) => item.secretId)));
+    const resolvedMap = new Map();
+
+    await Promise.all(uniqueSecretIds.map(async (secretId) => {
+        let plainText = String(await getRealSecret(secretId) || '').trim();
+
+        if (!plainText) {
+            const fallback = String(await getSecretValue(secretId) || '').trim();
+            if (fallback && fallback !== secretId && !isLikelySecretId(fallback)) {
+                plainText = fallback;
+            }
+        }
+
+        resolvedMap.set(secretId, plainText || null);
+    }));
+
+    const missingRefs = [];
+    let lastPlainTextKey = '';
+
+    pendingTargets.forEach((target) => {
+        const plainText = String(resolvedMap.get(target.secretId) || '').trim();
+        if (plainText) {
+            target.host[target.field] = plainText;
+            replacedCount += 1;
+            lastPlainTextKey = plainText;
+        } else {
+            missingRefs.push({
+                secretId: target.secretId,
+                field: target.field,
+                presetName: target.presetName,
+            });
+        }
+    });
+
+    return {
+        replacedCount,
+        lastPlainTextKey,
+        missingRefs,
+    };
+}
+
+function getSecretReferenceIdentity(reference) {
+    const key = String(reference?.key || 'api_key_custom').trim();
+    const secretId = String(reference?.secret_id || '').trim();
+    return `${key}::${secretId}`;
+}
+
+function collectSecretReferenceNodes(node, bucket = []) {
+    if (!node || typeof node !== 'object') {
+        return bucket;
+    }
+
+    if (Array.isArray(node)) {
+        node.forEach((item) => collectSecretReferenceNodes(item, bucket));
+        return bucket;
+    }
+
+    for (const [field, value] of Object.entries(node)) {
+        if (typeof value === 'string') {
+            const reference = parseSecretReferencePlaceholder(value);
+            if (reference && reference.manual_input_required) {
+                bucket.push({
+                    host: node,
+                    field,
+                    reference,
+                });
+            }
+        }
+
+        if (value && typeof value === 'object') {
+            collectSecretReferenceNodes(value, bucket);
+        }
+    }
+
+    return bucket;
+}
+
+function requestManualSecretInput(reference, index, total) {
+    const keyName = String(reference?.key || 'api_key_custom');
+    const secretId = String(reference?.secret_id || 'unknown');
+    const message = [
+        `导入检测到受保护密钥占位符（${index}/${total}）`,
+        `字段：${keyName}`,
+        `Secret ID：${secretId}`,
+        '请输入对应明文密钥（留空或取消=跳过，稍后手动填写）',
+    ].join('\n');
+
+    const input = window.prompt(message, '');
+    if (input === null) {
+        return '';
+    }
+
+    return String(input || '').trim();
+}
+
+async function resolveSecretReferencesInImportedEntries(entries = []) {
+    const placeholders = [];
+
+    entries.forEach((entry) => {
+        if (entry?.raw && typeof entry.raw === 'object') {
+            collectSecretReferenceNodes(entry.raw, placeholders);
+        }
+    });
+
+    if (!placeholders.length) {
+        return {
+            total: 0,
+            resolved: 0,
+            skipped: 0,
+            unresolvedRefs: [],
+        };
+    }
+
+    const answerByIdentity = new Map();
+    const uniqueRefs = [];
+    const seen = new Set();
+
+    placeholders.forEach((item) => {
+        const identity = getSecretReferenceIdentity(item.reference);
+        if (!seen.has(identity)) {
+            seen.add(identity);
+            uniqueRefs.push(item.reference);
+        }
+    });
+
+    uniqueRefs.forEach((reference, index) => {
+        const identity = getSecretReferenceIdentity(reference);
+        const answer = requestManualSecretInput(reference, index + 1, uniqueRefs.length);
+        answerByIdentity.set(identity, answer);
+    });
+
+    let resolved = 0;
+    const unresolvedMap = new Map();
+
+    placeholders.forEach((item) => {
+        const identity = getSecretReferenceIdentity(item.reference);
+        const answer = String(answerByIdentity.get(identity) || '').trim();
+
+        if (answer) {
+            item.host[item.field] = answer;
+            resolved += 1;
+        } else {
+            item.host[item.field] = '';
+            if (!unresolvedMap.has(identity)) {
+                unresolvedMap.set(identity, item.reference);
+            }
+        }
+    });
+
+    return {
+        total: placeholders.length,
+        resolved,
+        skipped: placeholders.length - resolved,
+        unresolvedRefs: Array.from(unresolvedMap.values()),
+    };
+}
+
 /**
- * 读取当前 UI 上的 API 配置（当前选择类型 + URL/Key/Model）
+ * 读取当前 API 配置（优先 settings + getTypeKey，必要时兜底 UI）
  */
 export function captureCurrentConfig() {
     const apiType = detectCurrentApiType();
     const meta = getApiMeta(apiType);
+    const normalizedType = normalizeApiType(apiType);
+    const settingsConfig = resolveConfigFromSettings(normalizedType);
 
-    const url = readFirstValue([...meta.url, ...GENERIC_SELECTORS.url], { nonEmptyOnly: true });
-    const key = readFirstValue([...meta.key, ...GENERIC_SELECTORS.key]);
+    const fallbackUrl = readFirstValue([...meta.url, ...GENERIC_SELECTORS.url], { nonEmptyOnly: true });
+    const fallbackKey = readFirstValue(
+        [...meta.key, ...GENERIC_SELECTORS.key].filter((selector) => selector !== '#api_key_custom'),
+    );
     const model = readFirstValue([...meta.model, ...GENERIC_SELECTORS.model]);
+
+    const enforceSettingsOnly = normalizedType === 'custom';
+    const url = enforceSettingsOnly ? settingsConfig.url : (settingsConfig.url || fallbackUrl);
+    const key = enforceSettingsOnly ? settingsConfig.key : (settingsConfig.key || fallbackKey);
 
     return {
         api_type: apiType,
@@ -699,6 +1354,112 @@ export function captureCurrentConfig() {
         key,
         model,
     };
+}
+
+/**
+ * 导出配置 JSON
+ */
+export async function exportProfiles() {
+    if (state.ioBusy) {
+        toast('warning', '正在处理导入/导出任务，请稍候...');
+        return;
+    }
+
+    try {
+        const descriptor = getPresetDescriptor();
+        if (!descriptor) {
+            throw new Error('未找到可导出的 API 配置存储');
+        }
+
+        const originalData = descriptor.rawValue;
+        // 严禁修改原数据
+        let exportCopy = JSON.parse(JSON.stringify(originalData));
+        let {
+            replacedCount,
+            lastPlainTextKey,
+            missingRefs,
+        } = await replaceSecretManagedCustomKeyInExportPayload(exportCopy);
+
+        // 导出前必须补全密钥；若缺失则先弹窗填写并缓存，再重新执行导出准备。
+        if (missingRefs.length > 0) {
+            const continued = await requestManualSecretsBeforeExport(missingRefs);
+            if (!continued) {
+                setPresetStatus('已取消导出：仍有密钥未补全', 'warning');
+                toast('warning', '已取消导出：请补全密钥后重试');
+                return;
+            }
+
+            // 保存后重新走一轮，确保本次导出文件已替换为明文。
+            exportCopy = JSON.parse(JSON.stringify(originalData));
+            ({
+                replacedCount,
+                lastPlainTextKey,
+                missingRefs,
+            } = await replaceSecretManagedCustomKeyInExportPayload(exportCopy));
+
+            if (missingRefs.length > 0) {
+                throw new Error('仍有密钥无法解析，请确认已填写完整后重试');
+            }
+        }
+
+        console.log(LOG_PREFIX, '导出前明文提取结果:', lastPlainTextKey || '(未命中 secret-id 或明文为空)');
+
+        if (replacedCount > 0) {
+            log(`导出前已将 ${replacedCount} 处 secret-id 替换为明文 key`);
+        }
+
+        const select = resolvePresetSelect(resolvePresetPanelHost().element || document);
+        const payload = {
+            version: 1,
+            exported_at: new Date().toISOString(),
+            source: descriptor.kind,
+            selected: select instanceof HTMLSelectElement
+                ? {
+                    value: String(select.value ?? ''),
+                    index: select.selectedIndex,
+                    text: String(select.selectedOptions?.[0]?.textContent || '').trim(),
+                }
+                : null,
+            api_presets: exportCopy,
+        };
+
+        const { cancelled, password } = requestOptionalExportPassword();
+        if (cancelled) {
+            setPresetStatus('已取消导出', 'warning');
+            toast('warning', '已取消导出');
+            return;
+        }
+
+        const useEncryption = Boolean(password);
+        if (useEncryption && !hasWebCryptoSupport()) {
+            throw new Error('当前环境不支持 Web Crypto API，无法执行密码加密导出');
+        }
+
+        setIoBusy(true, useEncryption ? '正在加密导出，请稍候...' : '正在导出配置，请稍候...');
+
+        const finalPayload = useEncryption
+            ? await encryptPayloadWithPassword(payload, password)
+            : payload;
+
+        const filename = useEncryption
+            ? `api-presets-encrypted-${Date.now()}.json`
+            : `api-presets-${Date.now()}.json`;
+
+        downloadJson(filename, finalPayload);
+        setPresetStatus(useEncryption ? '加密导出成功' : '导出成功', 'success');
+        toast('success', useEncryption ? `配置已加密导出成功（替换 ${replacedCount} 项密钥）` : `配置导出成功（替换 ${replacedCount} 项密钥）`);
+    } catch (error) {
+        logError('导出配置失败', error);
+        const message = error?.message || error;
+        setPresetStatus(`导出失败：${message}`, 'error');
+        toast('error', `导出失败：${message}`);
+    } finally {
+        setIoBusy(false);
+    }
+}
+
+export async function exportData() {
+    await exportProfiles();
 }
 
 async function setApiTypeInUi(apiType) {
@@ -2006,71 +2767,6 @@ async function waitForPresetEnvironmentReady(timeoutMs = 12000) {
     return false;
 }
 
-/**
- * 导出配置 JSON
- */
-export async function exportProfiles() {
-    if (state.ioBusy) {
-        toast('warning', '正在处理导入/导出任务，请稍候...');
-        return;
-    }
-
-    try {
-        const descriptor = getPresetDescriptor();
-        if (!descriptor) {
-            throw new Error('未找到可导出的 API 配置存储');
-        }
-
-        const select = resolvePresetSelect(resolvePresetPanelHost().element || document);
-        const payload = {
-            version: 1,
-            exported_at: new Date().toISOString(),
-            source: descriptor.kind,
-            selected: select instanceof HTMLSelectElement
-                ? {
-                    value: String(select.value ?? ''),
-                    index: select.selectedIndex,
-                    text: String(select.selectedOptions?.[0]?.textContent || '').trim(),
-                }
-                : null,
-            api_presets: deepClone(descriptor.rawValue),
-        };
-
-        const { cancelled, password } = requestOptionalExportPassword();
-        if (cancelled) {
-            setPresetStatus('已取消导出', 'warning');
-            toast('warning', '已取消导出');
-            return;
-        }
-
-        const useEncryption = Boolean(password);
-        if (useEncryption && !hasWebCryptoSupport()) {
-            throw new Error('当前环境不支持 Web Crypto API，无法执行密码加密导出');
-        }
-
-        setIoBusy(true, useEncryption ? '正在加密导出，请稍候...' : '正在导出配置，请稍候...');
-
-        const finalPayload = useEncryption
-            ? await encryptPayloadWithPassword(payload, password)
-            : payload;
-
-        const filename = useEncryption
-            ? `api-presets-encrypted-${Date.now()}.json`
-            : `api-presets-${Date.now()}.json`;
-
-        downloadJson(filename, finalPayload);
-        setPresetStatus(useEncryption ? '加密导出成功' : '导出成功', 'success');
-        toast('success', useEncryption ? '配置已加密导出成功' : '配置导出成功');
-    } catch (error) {
-        logError('导出配置失败', error);
-        const message = error?.message || error;
-        setPresetStatus(`导出失败：${message}`, 'error');
-        toast('error', `导出失败：${message}`);
-    } finally {
-        setIoBusy(false);
-    }
-}
-
 function parseImportedPayload(parsed) {
     if (Array.isArray(parsed)) {
         return {
@@ -2143,6 +2839,7 @@ export async function importProfiles(file, mode = 'merge') {
 
         setPresetStatus('正在校验并导入配置，请稍候...', 'info');
         const imported = normalizeImportedPresetPayload(parsed);
+        const secretResolution = await resolveSecretReferencesInImportedEntries(imported.entries);
         const normalizedMode = mode === 'replace' ? 'replace' : 'merge';
         let importedCount = 0;
 
@@ -2169,8 +2866,19 @@ export async function importProfiles(file, mode = 'merge') {
         }
 
         const modeText = normalizedMode === 'replace' ? '替换' : '合并';
-        setPresetStatus(`${modeText}导入 ${importedCount} 条配置`, 'success');
-        toast('success', `导入完成（${modeText}）：${importedCount} 条配置`);
+        if (secretResolution.skipped > 0) {
+            const pendingSummary = secretResolution.unresolvedRefs
+                .map((item) => `${item.key}${item.secret_id ? `(${item.secret_id.slice(0, 8)}...)` : ''}`)
+                .slice(0, 3)
+                .join('、');
+            const pendingText = pendingSummary ? `，待补：${pendingSummary}` : '';
+
+            setPresetStatus(`${modeText}导入 ${importedCount} 条配置，${secretResolution.skipped} 项密钥待手动补填`, 'warning');
+            toast('warning', `导入完成（${modeText}）：${importedCount} 条配置，${secretResolution.skipped} 项密钥待补填${pendingText}`);
+        } else {
+            setPresetStatus(`${modeText}导入 ${importedCount} 条配置`, 'success');
+            toast('success', `导入完成（${modeText}）：${importedCount} 条配置`);
+        }
     } catch (error) {
         logError('导入配置失败', error);
         const message = error?.message || error;
