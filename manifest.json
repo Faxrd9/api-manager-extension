@@ -4,7 +4,7 @@
     "loading_order": 10,
     "requires": [],
     "optional": [],
-    "version": "3.0.0",
+    "version": "3.1.0",
     "description": "Inject search toolbar for API presets",
     "author": "Faxrd9 (feat. 听话的 ChatGPT, 又爱又恨的聪明Gemini)",
     "js": [

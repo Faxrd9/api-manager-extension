@@ -1,5 +1,5 @@
 const LOG_PREFIX = '[API Search]';
-const EXT_VERSION = '3.0.0';
+const EXT_VERSION = '3.1.0';
 const LIFECYCLE_KEY = '__api_search_extension_lifecycle__';
 const VERSION_KEY = '__api_search_extension_version__';
 const RELOAD_ONCE_KEY = '__api_search_extension_reloaded_once__';
@@ -24,12 +24,13 @@ function getLifecycleState() {
 
 async function initializeExtension() {
     const lifecycle = getLifecycleState();
-    if (lifecycle.bootstrapping || lifecycle.initialized) {
-        return lifecycle.status;
-    }
 
     if (ensureReloadAfterInstallOrUpdate()) {
         lifecycle.status = 'reloading';
+        return lifecycle.status;
+    }
+
+    if (lifecycle.bootstrapping || lifecycle.initialized) {
         return lifecycle.status;
     }
 
