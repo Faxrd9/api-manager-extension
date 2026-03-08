@@ -1,5 +1,8 @@
-const LOG_PREFIX = '[API管理器]';
-const LIFECYCLE_KEY = '__api_manager_extension_lifecycle__';
+const LOG_PREFIX = '[API Search]';
+const EXT_VERSION = '3.0.0';
+const LIFECYCLE_KEY = '__api_search_extension_lifecycle__';
+const VERSION_KEY = '__api_search_extension_version__';
+const RELOAD_ONCE_KEY = '__api_search_extension_reloaded_once__';
 const globalAny = /** @type {any} */ (globalThis);
 
 function getLifecycleState() {
@@ -25,6 +28,11 @@ async function initializeExtension() {
         return lifecycle.status;
     }
 
+    if (ensureReloadAfterInstallOrUpdate()) {
+        lifecycle.status = 'reloading';
+        return lifecycle.status;
+    }
+
     lifecycle.bootstrapping = true;
     lifecycle.status = 'loading';
     lifecycle.error = null;
@@ -32,13 +40,13 @@ async function initializeExtension() {
     try {
         const appModuleUrl = new URL('./app.js', import.meta.url).href;
         const appModule = await import(appModuleUrl);
-        const initApiManagerExtension = appModule?.initApiManagerExtension;
+        const initApiSearchExtension = appModule?.initApiManagerExtension;
 
-        if (typeof initApiManagerExtension !== 'function') {
+        if (typeof initApiSearchExtension !== 'function') {
             throw new Error('入口模块缺少 initApiManagerExtension 导出');
         }
 
-        await initApiManagerExtension();
+        await initApiSearchExtension();
 
         lifecycle.initialized = true;
         lifecycle.status = 'loaded';
@@ -52,6 +60,33 @@ async function initializeExtension() {
     }
 
     return lifecycle.status;
+}
+
+function ensureReloadAfterInstallOrUpdate() {
+    try {
+        const previousVersion = String(localStorage.getItem(VERSION_KEY) || '');
+        const reloadedMark = String(sessionStorage.getItem(RELOAD_ONCE_KEY) || '');
+
+        if (previousVersion !== EXT_VERSION) {
+            localStorage.setItem(VERSION_KEY, EXT_VERSION);
+
+            if (reloadedMark !== EXT_VERSION) {
+                sessionStorage.setItem(RELOAD_ONCE_KEY, EXT_VERSION);
+                setTimeout(() => {
+                    globalThis.location?.reload?.();
+                }, 60);
+                return true;
+            }
+        }
+
+        if (reloadedMark === EXT_VERSION) {
+            sessionStorage.removeItem(RELOAD_ONCE_KEY);
+        }
+    } catch (error) {
+        console.warn(LOG_PREFIX, '版本刷新检查失败，继续常规初始化', error);
+    }
+
+    return false;
 }
 
 function bootstrapByJqueryHook() {
@@ -97,12 +132,12 @@ function bootstrapFallback() {
     });
 }
 
-export async function initApiManagerLifecycle() {
+export async function initApiSearchLifecycle() {
     await initializeExtension();
 }
 
-export const apiManagerLifecycleState = getLifecycleState();
-export default initApiManagerLifecycle;
+export const apiSearchLifecycleState = getLifecycleState();
+export default initApiSearchLifecycle;
 
 if (!bootstrapByJqueryHook()) {
     bootstrapFallback();
