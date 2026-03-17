@@ -1,5 +1,5 @@
 const LOG_PREFIX = '[API Search]';
-const EXT_VERSION = '3.1.0';
+const EXT_VERSION = '3.2.0';
 const LIFECYCLE_KEY = '__api_search_extension_lifecycle__';
 const VERSION_KEY = '__api_search_extension_version__';
 const RELOAD_ONCE_KEY = '__api_search_extension_reloaded_once__';

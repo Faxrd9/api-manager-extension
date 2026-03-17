@@ -154,11 +154,9 @@
     border-radius: var(--api-search-radius-lg);
     background:
         radial-gradient(130% 110% at 10% -8%, rgb(from var(--white, #fff) r g b / 0.13), transparent 50%),
-        linear-gradient(
-            165deg,
+        linear-gradient(165deg,
             rgb(from var(--black90a, #111) r g b / 0.92),
-            rgb(from var(--black80a, #1a1b1f) r g b / 0.84)
-        );
+            rgb(from var(--black80a, #1a1b1f) r g b / 0.84));
     backdrop-filter: blur(var(--SmartThemeBlurStrength, 12px)) saturate(1.06);
     box-shadow:
         inset 0 1px 0 rgb(from var(--white, #fff) r g b / 0.12),
@@ -230,6 +228,56 @@
     color: var(--api-search-text-muted);
 }
 
+/* 操作按钮行 */
+.api-manager-actions-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+    padding-top: 10px;
+    border-top: 1px solid var(--api-search-border);
+}
+
+/* 操作按钮 */
+.api-manager-action-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    border: 1px solid var(--api-search-border);
+    border-radius: var(--api-search-radius-lg);
+    background:
+        linear-gradient(180deg, rgb(from var(--white, #fff) r g b / 0.08), transparent 48%),
+        rgb(from var(--black80a, #1a1b1f) r g b / 0.5);
+    color: var(--api-search-text);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    flex: 1;
+    justify-content: center;
+}
+
+.api-manager-action-btn:hover {
+    background:
+        linear-gradient(180deg, rgb(from var(--white, #fff) r g b / 0.12), transparent 48%),
+        rgb(from var(--black80a, #1a1b1f) r g b / 0.6);
+    border-color: rgb(from var(--SmartThemeBorderColor, #3a3a3c) r g b / 0.82);
+    transform: translateY(-1px);
+}
+
+.api-manager-action-btn:active {
+    transform: translateY(0);
+}
+
+.api-manager-action-btn svg {
+    flex-shrink: 0;
+    opacity: 0.85;
+}
+
+.api-manager-action-btn span {
+    white-space: nowrap;
+}
+
 @media (max-width: 56rem) {
     :root {
         --api-search-height: 37px;
@@ -291,6 +339,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+
     #api-search-input,
     .api-manager-search-clear-btn,
     .api-manager-search-result-item {

@@ -188,6 +188,25 @@ function createToolbar() {
             <button type="button" id="${PRESET_DOM.clearId}" class="api-manager-search-clear-btn" aria-label="clear search" title="clear search">×</button>
             <div id="${PRESET_DOM.resultId}" class="api-manager-search-results" hidden></div>
         </div>
+        <div class="api-manager-actions-row">
+            <button type="button" id="api-manager-export-btn" class="api-manager-action-btn" title="导出所有 API 配置（密钥+连接设置）">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="7 10 12 15 17 10"></polyline>
+                    <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+                <span>导出配置</span>
+            </button>
+            <button type="button" id="api-manager-import-btn" class="api-manager-action-btn" title="导入 API 配置（密钥+连接设置）">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                    <polyline points="17 8 12 3 7 8"></polyline>
+                    <line x1="12" y1="3" x2="12" y2="15"></line>
+                </svg>
+                <span>导入配置</span>
+            </button>
+            <input type="file" id="api-manager-import-file" accept=".json" style="display: none;" />
+        </div>
         <div id="${PRESET_DOM.statusId}" class="api-manager-status"></div>
     `;
     return toolbar;
@@ -214,10 +233,272 @@ function bindGlobalDismiss() {
     });
 }
 
+/**
+ * 获取请求头
+ * @returns {Object} 请求头对象
+ */
+function getRequestHeaders() {
+    const context = getContextSafe();
+    if (context?.getRequestHeaders) {
+        return context.getRequestHeaders();
+    }
+    return {
+        'Content-Type': 'application/json',
+        'X-CSRF-Token': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
+    };
+}
+
+/**
+ * 获取完整的 API 连接配置
+ * @returns {Promise<Object>} API 配置对象
+ */
+async function getApiConnectionSettings() {
+    try {
+        const response = await fetch('/api/settings/get', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({}),
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+        if (!data.settings) {
+            return {};
+        }
+
+        const settings = JSON.parse(data.settings);
+
+        // 提取 API 连接相关配置
+        const apiConfig = {
+            // 主 API 设置
+            main_api: settings.main_api,
+
+            // Kobold 设置
+            kai_settings: settings.kai_settings,
+
+            // NovelAI 设置
+            nai_settings: settings.nai_settings,
+
+            // TextGen 设置
+            textgenerationwebui_settings: settings.textgenerationwebui_settings,
+
+            // OpenAI 设置
+            oai_settings: settings.oai_settings,
+
+            // Horde 设置
+            horde_settings: settings.horde_settings,
+
+            // 代理设置
+            proxies: settings.proxies,
+            selected_proxy: settings.selected_proxy,
+        };
+
+        return apiConfig;
+    } catch (error) {
+        console.error(LOG_PREFIX, '获取 API 配置失败:', error);
+        return {};
+    }
+}
+
+/**
+ * 保存 API 连接配置
+ * @param {Object} apiConfig - API 配置对象
+ */
+async function saveApiConnectionSettings(apiConfig) {
+    try {
+        // 先获取当前设置
+        const response = await fetch('/api/settings/get', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({}),
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+        const currentSettings = data.settings ? JSON.parse(data.settings) : {};
+
+        // 合并新配置
+        const newSettings = {
+            ...currentSettings,
+            ...apiConfig,
+        };
+
+        // 保存设置
+        const saveResponse = await fetch('/api/settings/save', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify(newSettings),
+        });
+
+        if (!saveResponse.ok) {
+            throw new Error(`HTTP error! status: ${saveResponse.status}`);
+        }
+
+        return true;
+    } catch (error) {
+        console.error(LOG_PREFIX, '保存 API 配置失败:', error);
+        return false;
+    }
+}
+
+/**
+ * 导出所有 API 配置（包括密钥和连接配置）
+ */
+async function exportApiKeys() {
+    try {
+        // 1. 获取 API 密钥
+        const secretsResponse = await fetch('/api/secrets/view', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+        });
+
+        let secrets = {};
+        if (secretsResponse.status === 403) {
+            setStatus(document.getElementById(PRESET_DOM.toolbarId), '警告: 请在 config.yaml 中设置 allowKeysExposure 为 true 以导出密钥');
+        } else if (secretsResponse.ok) {
+            secrets = await secretsResponse.json();
+        }
+
+        // 2. 获取 API 连接配置
+        const apiConfig = await getApiConnectionSettings();
+
+        // 3. 合并数据
+        const exportData = {
+            version: '1.0',
+            exportDate: new Date().toISOString(),
+            secrets: secrets,
+            apiConfig: apiConfig,
+        };
+
+        // 4. 创建下载
+        const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `api-config-${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        const secretCount = Object.keys(secrets).length;
+        setStatus(document.getElementById(PRESET_DOM.toolbarId), `已导出: ${secretCount} 个密钥 + API 连接配置`);
+    } catch (error) {
+        console.error(LOG_PREFIX, '导出 API 配置失败:', error);
+        setStatus(document.getElementById(PRESET_DOM.toolbarId), '导出失败: ' + error.message);
+    }
+}
+
+/**
+ * 导入 API 配置（包括密钥和连接配置）
+ * @param {File} file - 要导入的 JSON 文件
+ */
+async function importApiKeys(file) {
+    try {
+        const text = await file.text();
+        const data = JSON.parse(text);
+
+        if (!data || typeof data !== 'object') {
+            throw new Error('无效的 JSON 格式');
+        }
+
+        let importedSecrets = 0;
+        let skippedSecrets = 0;
+        let importedConfig = false;
+
+        // 1. 导入 API 密钥（如果存在）
+        if (data.secrets && typeof data.secrets === 'object') {
+            // 获取当前状态以检查现有密钥
+            const viewResponse = await fetch('/api/secrets/view', {
+                method: 'POST',
+                headers: getRequestHeaders(),
+            });
+
+            let existingKeys = {};
+            if (viewResponse.ok) {
+                existingKeys = await viewResponse.json();
+            }
+
+            for (const [key, value] of Object.entries(data.secrets)) {
+                // 跳过非字符串值
+                if (typeof value !== 'string') {
+                    skippedSecrets++;
+                    continue;
+                }
+
+                // 如果密钥已存在且值相同，则跳过
+                if (existingKeys[key] === value) {
+                    skippedSecrets++;
+                    continue;
+                }
+
+                // 写入密钥
+                const writeResponse = await fetch('/api/secrets/write', {
+                    method: 'POST',
+                    headers: getRequestHeaders(),
+                    body: JSON.stringify({
+                        key,
+                        value,
+                        label: `导入于 ${new Date().toLocaleString('zh-CN')}`
+                    }),
+                });
+
+                if (writeResponse.ok) {
+                    importedSecrets++;
+                } else {
+                    skippedSecrets++;
+                }
+            }
+
+            // 刷新密钥状态
+            const context = getContextSafe();
+            if (context?.eventSource && context?.eventTypes?.SECRET_WRITTEN) {
+                await context.eventSource.emit(context.eventTypes.SECRET_WRITTEN);
+            }
+        }
+
+        // 2. 导入 API 连接配置（如果存在）
+        if (data.apiConfig && typeof data.apiConfig === 'object') {
+            const saveResult = await saveApiConnectionSettings(data.apiConfig);
+            if (saveResult) {
+                importedConfig = true;
+            }
+        }
+
+        // 3. 刷新页面以应用新配置
+        if (importedConfig) {
+            setStatus(document.getElementById(PRESET_DOM.toolbarId), `导入完成: ${importedSecrets} 个密钥, 配置已更新，刷新中...`);
+            setTimeout(() => {
+                window.location.reload();
+            }, 1500);
+        } else {
+            setStatus(document.getElementById(PRESET_DOM.toolbarId), `导入完成: ${importedSecrets} 个密钥成功, ${skippedSecrets} 个跳过`);
+
+            // 触发 API 重新连接
+            const mainApi = document.querySelector('#main_api');
+            if (mainApi) {
+                mainApi.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+        }
+    } catch (error) {
+        console.error(LOG_PREFIX, '导入 API 配置失败:', error);
+        setStatus(document.getElementById(PRESET_DOM.toolbarId), '导入失败: ' + error.message);
+    }
+}
+
 function bindToolbarEvents(toolbar, select) {
     const searchInput = toolbar.querySelector(`#${PRESET_DOM.searchId}`);
     const clearButton = toolbar.querySelector(`#${PRESET_DOM.clearId}`);
     const resultBox = toolbar.querySelector(`#${PRESET_DOM.resultId}`);
+    const exportBtn = toolbar.querySelector('#api-manager-export-btn');
+    const importBtn = toolbar.querySelector('#api-manager-import-btn');
+    const importFile = toolbar.querySelector('#api-manager-import-file');
 
     if (searchInput instanceof HTMLInputElement && !searchInput.dataset.bound) {
         searchInput.dataset.bound = '1';
@@ -272,6 +553,35 @@ function bindToolbarEvents(toolbar, select) {
             select.dispatchEvent(new Event('change', { bubbles: true }));
             clearSearch(select, toolbar);
             hideResults(toolbar);
+        });
+    }
+
+    // 绑定导出按钮事件
+    if (exportBtn instanceof HTMLButtonElement && !exportBtn.dataset.bound) {
+        exportBtn.dataset.bound = '1';
+        exportBtn.addEventListener('click', () => {
+            void exportApiKeys();
+        });
+    }
+
+    // 绑定导入按钮事件
+    if (importBtn instanceof HTMLButtonElement && !importBtn.dataset.bound) {
+        importBtn.dataset.bound = '1';
+        importBtn.addEventListener('click', () => {
+            importFile?.click();
+        });
+    }
+
+    // 绑定文件选择事件
+    if (importFile instanceof HTMLInputElement && !importFile.dataset.bound) {
+        importFile.dataset.bound = '1';
+        importFile.addEventListener('change', (event) => {
+            const file = event.target.files?.[0];
+            if (file) {
+                void importApiKeys(file);
+                // 重置 input 以便可以再次选择同一文件
+                event.target.value = '';
+            }
         });
     }
 

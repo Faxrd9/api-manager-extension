@@ -1,11 +1,11 @@
 {
     "name": "api-search-extension",
-    "display_name": "API Search",
+    "display_name": "API Manager",
     "loading_order": 10,
     "requires": [],
     "optional": [],
-    "version": "3.1.0",
-    "description": "Inject search toolbar for API presets",
+    "version": "3.2.0",
+    "description": "API 预设搜索 + 密钥导出/导入工具",
     "author": "Faxrd9 (feat. 听话的 ChatGPT, 又爱又恨的聪明Gemini)",
     "js": [
         "index.js"
