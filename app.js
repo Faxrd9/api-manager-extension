@@ -249,8 +249,8 @@ function getRequestHeaders() {
 }
 
 /**
- * 获取完整的 API 连接配置
- * @returns {Promise<Object>} API 配置对象
+ * 获取 API URL 配置（精简版）
+ * @returns {Promise<Object>} API URL 配置对象
  */
 async function getApiConnectionSettings() {
     try {
@@ -271,41 +271,47 @@ async function getApiConnectionSettings() {
 
         const settings = JSON.parse(data.settings);
 
-        // 提取 API 连接相关配置
-        const apiConfig = {
-            // 主 API 设置
-            main_api: settings.main_api,
+        // 只提取 URL 相关配置
+        const apiConfig = {};
 
-            // Kobold 设置
-            kai_settings: settings.kai_settings,
+        // Kobold URL
+        if (settings.kai_settings?.api_server) {
+            apiConfig.kai_api_server = settings.kai_settings.api_server;
+        }
 
-            // NovelAI 设置
-            nai_settings: settings.nai_settings,
+        // TextGen URL
+        if (settings.textgenerationwebui_settings?.api_server) {
+            apiConfig.textgen_api_server = settings.textgenerationwebui_settings.api_server;
+        }
 
-            // TextGen 设置
-            textgenerationwebui_settings: settings.textgenerationwebui_settings,
+        // NovelAI 不需要 URL（固定）
 
-            // OpenAI 设置
-            oai_settings: settings.oai_settings,
+        // OpenAI 相关 URL
+        if (settings.oai_settings) {
+            const oai = settings.oai_settings;
+            if (oai.openai_reverse_proxy) {
+                apiConfig.openai_reverse_proxy = oai.openai_reverse_proxy;
+            }
+            if (oai.custom_url) {
+                apiConfig.custom_url = oai.custom_url;
+            }
+            if (oai.custom_oai_url) {
+                apiConfig.custom_oai_url = oai.custom_oai_url;
+            }
+        }
 
-            // Horde 设置
-            horde_settings: settings.horde_settings,
-
-            // 代理设置
-            proxies: settings.proxies,
-            selected_proxy: settings.selected_proxy,
-        };
+        // Horde 不需要 URL（固定）
 
         return apiConfig;
     } catch (error) {
-        console.error(LOG_PREFIX, '获取 API 配置失败:', error);
+        console.error(LOG_PREFIX, '获取 API URL 失败:', error);
         return {};
     }
 }
 
 /**
- * 保存 API 连接配置
- * @param {Object} apiConfig - API 配置对象
+ * 保存 API URL 配置（精简版）
+ * @param {Object} apiConfig - API URL 配置对象
  */
 async function saveApiConnectionSettings(apiConfig) {
     try {
@@ -323,17 +329,37 @@ async function saveApiConnectionSettings(apiConfig) {
         const data = await response.json();
         const currentSettings = data.settings ? JSON.parse(data.settings) : {};
 
-        // 合并新配置
-        const newSettings = {
-            ...currentSettings,
-            ...apiConfig,
-        };
+        // 只更新 URL 相关配置
+        if (apiConfig.kai_api_server) {
+            currentSettings.kai_settings = currentSettings.kai_settings || {};
+            currentSettings.kai_settings.api_server = apiConfig.kai_api_server;
+        }
+
+        if (apiConfig.textgen_api_server) {
+            currentSettings.textgenerationwebui_settings = currentSettings.textgenerationwebui_settings || {};
+            currentSettings.textgenerationwebui_settings.api_server = apiConfig.textgen_api_server;
+        }
+
+        if (apiConfig.openai_reverse_proxy) {
+            currentSettings.oai_settings = currentSettings.oai_settings || {};
+            currentSettings.oai_settings.openai_reverse_proxy = apiConfig.openai_reverse_proxy;
+        }
+
+        if (apiConfig.custom_url) {
+            currentSettings.oai_settings = currentSettings.oai_settings || {};
+            currentSettings.oai_settings.custom_url = apiConfig.custom_url;
+        }
+
+        if (apiConfig.custom_oai_url) {
+            currentSettings.oai_settings = currentSettings.oai_settings || {};
+            currentSettings.oai_settings.custom_oai_url = apiConfig.custom_oai_url;
+        }
 
         // 保存设置
         const saveResponse = await fetch('/api/settings/save', {
             method: 'POST',
             headers: getRequestHeaders(),
-            body: JSON.stringify(newSettings),
+            body: JSON.stringify(currentSettings),
         });
 
         if (!saveResponse.ok) {
@@ -342,7 +368,7 @@ async function saveApiConnectionSettings(apiConfig) {
 
         return true;
     } catch (error) {
-        console.error(LOG_PREFIX, '保存 API 配置失败:', error);
+        console.error(LOG_PREFIX, '保存 API URL 失败:', error);
         return false;
     }
 }
