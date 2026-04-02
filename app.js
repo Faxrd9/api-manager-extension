@@ -1,9 +1,12 @@
 import { event_types, eventSource, saveSettingsDebounced } from '../../../../script.js';
 import { extension_settings } from '../../../extensions.js';
+import { Popup, POPUP_RESULT } from '../../../popup.js';
 import { findSecret, SECRET_KEYS, writeSecret } from '../../../secrets.js';
 
 const LOG_PREFIX = '[API Search]';
 const EXPORT_FORMAT = 'api-manager-openai-compatible-v1';
+const EXPORT_ENCRYPTION_VERSION = 'aes-gcm-v1';
+const PBKDF2_ITERATIONS = 120000;
 const globalAny = /** @type {any} */ (globalThis);
 
 const state = {
@@ -38,6 +41,8 @@ const PRESET_SELECT_SELECTORS = [
 ];
 
 const OPENAI_COMPATIBLE_API = 'custom';
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
 
 function log(...args) {
     console.log(LOG_PREFIX, ...args);
@@ -226,6 +231,88 @@ function createExportFileName() {
     return `api-manager-openai-configs-${yyyy}${mm}${dd}-${hh}${mi}${ss}.json`;
 }
 
+function bytesToBase64(bytes) {
+    let binary = '';
+    const chunkSize = 0x8000;
+
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+        const chunk = bytes.subarray(i, i + chunkSize);
+        binary += String.fromCharCode(...chunk);
+    }
+
+    return btoa(binary);
+}
+
+function base64ToBytes(value) {
+    const binary = atob(String(value || ''));
+    const bytes = new Uint8Array(binary.length);
+
+    for (let i = 0; i < binary.length; i += 1) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+
+    return bytes;
+}
+
+function randomBytes(length) {
+    const bytes = new Uint8Array(length);
+    globalThis.crypto.getRandomValues(bytes);
+    return bytes;
+}
+
+async function deriveAesKeyFromPassword(password, saltBytes, iterations = PBKDF2_ITERATIONS) {
+    const keyMaterial = await globalThis.crypto.subtle.importKey(
+        'raw',
+        textEncoder.encode(password),
+        { name: 'PBKDF2' },
+        false,
+        ['deriveKey'],
+    );
+
+    return globalThis.crypto.subtle.deriveKey(
+        {
+            name: 'PBKDF2',
+            salt: saltBytes,
+            iterations,
+            hash: 'SHA-256',
+        },
+        keyMaterial,
+        {
+            name: 'AES-GCM',
+            length: 256,
+        },
+        false,
+        ['encrypt', 'decrypt'],
+    );
+}
+
+async function encryptTextWithAesKey(plainText, aesKey) {
+    const iv = randomBytes(12);
+    const encrypted = await globalThis.crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv },
+        aesKey,
+        textEncoder.encode(String(plainText || '')),
+    );
+
+    return {
+        iv: bytesToBase64(iv),
+        data: bytesToBase64(new Uint8Array(encrypted)),
+    };
+}
+
+async function decryptTextWithAesKey(payload, aesKey) {
+    const iv = base64ToBytes(payload?.iv);
+    const data = base64ToBytes(payload?.data);
+
+    const decrypted = await globalThis.crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv },
+        aesKey,
+        data,
+    );
+
+    return textDecoder.decode(decrypted);
+}
+
 function downloadJson(payload, fileName) {
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -242,11 +329,45 @@ function downloadJson(payload, fileName) {
     }, 1200);
 }
 
+async function askExportPassword() {
+    const password = await Popup.show.input(
+        '导出加密设置',
+        '可选：输入密码以加密导出 API Key。\n留空将以明文导出 API Key（有泄露风险）。',
+        '',
+        {
+            rows: 1,
+            okButton: '继续导出',
+            cancelButton: '取消',
+        },
+    );
+
+    if (password === null) {
+        return null;
+    }
+
+    return String(password || '');
+}
+
 async function exportOpenAiConfigs() {
     const profiles = getOpenAiCompatibleProfiles();
+    const exportPassword = await askExportPassword();
+
+    if (exportPassword === null) {
+        return;
+    }
+
+    const hasPassword = Boolean(exportPassword);
     let unresolvedSecrets = 0;
 
     const items = [];
+
+    let keyDerivationSalt = null;
+    let derivedKey = null;
+
+    if (hasPassword) {
+        keyDerivationSalt = randomBytes(16);
+        derivedKey = await deriveAesKeyFromPassword(exportPassword, keyDerivationSalt, PBKDF2_ITERATIONS);
+    }
 
     for (const profile of profiles) {
         const url = String(profile['api-url'] || '').trim();
@@ -266,10 +387,19 @@ async function exportOpenAiConfigs() {
             continue;
         }
 
-        items.push({
+        const item = {
+            name: String(profile.name || '').trim(),
             url,
-            apikey: apiKey,
-        });
+        };
+
+        if (hasPassword && apiKey) {
+            const encrypted = await encryptTextWithAesKey(apiKey, derivedKey);
+            item.apikeyEncrypted = encrypted;
+        } else if (!hasPassword) {
+            item.apikey = apiKey;
+        }
+
+        items.push(item);
     }
 
     if (!items.length) {
@@ -284,12 +414,30 @@ async function exportOpenAiConfigs() {
         items,
     };
 
+    if (hasPassword && keyDerivationSalt) {
+        payload.encryption = {
+            scheme: EXPORT_ENCRYPTION_VERSION,
+            kdf: 'PBKDF2-SHA256',
+            iterations: PBKDF2_ITERATIONS,
+            salt: bytesToBase64(keyDerivationSalt),
+        };
+    }
+
     downloadJson(payload, createExportFileName());
 
+    if (hasPassword) {
+        if (unresolvedSecrets > 0) {
+            toastr.warning(`已加密导出 ${items.length} 条配置，${unresolvedSecrets} 条 API Key 无法读取`);
+        } else {
+            toastr.success(`已加密导出 ${items.length} 条 OpenAI 兼容配置`);
+        }
+        return;
+    }
+
     if (unresolvedSecrets > 0) {
-        toastr.warning(`已导出 ${items.length} 条配置，${unresolvedSecrets} 条 API Key 无法读取（可能服务端关闭了密钥暴露）`);
+        toastr.warning(`已明文导出 ${items.length} 条配置，${unresolvedSecrets} 条 API Key 无法读取`);
     } else {
-        toastr.success(`已导出 ${items.length} 条 OpenAI 兼容配置`);
+        toastr.success(`已明文导出 ${items.length} 条 OpenAI 兼容配置`);
     }
 }
 
@@ -300,18 +448,30 @@ function parseImportPayload(rawText) {
         throw new Error('文件格式不匹配');
     }
 
+    const encryption = parsed.encryption && typeof parsed.encryption === 'object'
+        ? parsed.encryption
+        : null;
+
+    const hasEncrypted = parsed.items.some((entry) => Boolean(entry?.apikeyEncrypted));
+
     const items = parsed.items
         .map((entry) => ({
+            name: String(entry?.name || '').trim(),
             url: String(entry?.url || '').trim(),
             apikey: String(entry?.apikey || '').trim(),
+            apikeyEncrypted: entry?.apikeyEncrypted || null,
         }))
-        .filter((entry) => entry.url || entry.apikey);
+        .filter((entry) => entry.url || entry.apikey || entry.apikeyEncrypted || entry.name);
 
     if (!items.length) {
         throw new Error('文件中没有可导入的配置');
     }
 
-    return items;
+    return {
+        items,
+        encryption,
+        hasEncrypted,
+    };
 }
 
 function createProfileId() {
@@ -382,28 +542,155 @@ function refreshConnectionProfilesSelect() {
     });
 }
 
+async function askImportConfirmation(totalCount, encryptedCount, plainKeyCount) {
+    const lines = [
+        `检测到 ${totalCount} 条可导入配置。`,
+        encryptedCount > 0 ? `其中 ${encryptedCount} 条包含加密 API Key。` : '未检测到加密 API Key。',
+        plainKeyCount > 0 ? `其中 ${plainKeyCount} 条包含明文 API Key。` : '未检测到明文 API Key。',
+        '是否继续导入？',
+    ];
+
+    const result = await Popup.show.confirm('确认导入', lines.join('\n'), {
+        okButton: '继续导入',
+        cancelButton: '取消',
+    });
+
+    return result === POPUP_RESULT.AFFIRMATIVE;
+}
+
+async function resolveImportApiKey(item, encryption, cachedPasswordState) {
+    if (item.apikey) {
+        return item.apikey;
+    }
+
+    if (!item.apikeyEncrypted) {
+        return '';
+    }
+
+    if (!encryption || encryption.scheme !== EXPORT_ENCRYPTION_VERSION || !encryption.salt) {
+        throw new Error('加密配置缺少必要参数，无法解密');
+    }
+
+    if (cachedPasswordState.cancelled) {
+        throw new Error('用户取消了解密');
+    }
+
+    if (!cachedPasswordState.key) {
+        const password = await Popup.show.input(
+            '导入解密密码',
+            '该文件包含加密 API Key，请输入导出时设置的密码。',
+            '',
+            {
+                rows: 1,
+                okButton: '解密并导入',
+                cancelButton: '取消',
+            },
+        );
+
+        if (password === null) {
+            cachedPasswordState.cancelled = true;
+            throw new Error('用户取消了解密');
+        }
+
+        const salt = base64ToBytes(encryption.salt);
+        const iterations = Number(encryption.iterations) || PBKDF2_ITERATIONS;
+        cachedPasswordState.key = await deriveAesKeyFromPassword(String(password || ''), salt, iterations);
+    }
+
+    try {
+        return await decryptTextWithAesKey(item.apikeyEncrypted, cachedPasswordState.key);
+    } catch {
+        throw new Error('解密失败：密码错误或文件已损坏');
+    }
+}
+
+function createConfigFingerprint(url, apiKey) {
+    const normalizedUrl = String(url || '').trim();
+    const normalizedKey = String(apiKey || '').trim();
+    return `${normalizedUrl}\n${normalizedKey}`;
+}
+
+async function collectExistingConfigFingerprints() {
+    const fingerprints = new Set();
+    let unreadableSecretCount = 0;
+
+    const profiles = getOpenAiCompatibleProfiles();
+
+    for (const profile of profiles) {
+        const url = String(profile?.['api-url'] || '').trim();
+        const secretId = String(profile?.['secret-id'] || '').trim();
+
+        let apiKey = '';
+        if (secretId) {
+            const resolved = await findSecret(SECRET_KEYS.CUSTOM, secretId);
+            if (resolved === null) {
+                unreadableSecretCount += 1;
+            } else {
+                apiKey = String(resolved || '');
+            }
+        }
+
+        if (!url && !apiKey) {
+            continue;
+        }
+
+        fingerprints.add(createConfigFingerprint(url, apiKey));
+    }
+
+    return {
+        fingerprints,
+        unreadableSecretCount,
+    };
+}
+
 async function importOpenAiConfigsFromFile(file) {
     if (!(file instanceof File)) {
         return;
     }
 
     const rawText = await file.text();
-    const importedItems = parseImportPayload(rawText);
+    const parsedImport = parseImportPayload(rawText);
+    const importedItems = parsedImport.items;
+
+    const encryptedCount = importedItems.filter((item) => Boolean(item.apikeyEncrypted)).length;
+    const plainKeyCount = importedItems.filter((item) => Boolean(item.apikey)).length;
+
+    const confirmed = await askImportConfirmation(importedItems.length, encryptedCount, plainKeyCount);
+    if (!confirmed) {
+        return;
+    }
 
     const manager = getConnectionManagerState();
     const existingNames = new Set(manager.profiles.map((profile) => String(profile?.name || '').trim()));
 
+    const existingConfigs = await collectExistingConfigFingerprints();
+    const knownFingerprints = existingConfigs.fingerprints;
+
     let importedCount = 0;
+    let skippedDuplicateCount = 0;
+    const passwordState = {
+        key: null,
+        cancelled: false,
+    };
 
     for (let i = 0; i < importedItems.length; i += 1) {
         const item = importedItems[i];
-        const name = ensureUniqueProfileName(guessProfileName(item.url, i), existingNames);
+        const resolvedApiKey = await resolveImportApiKey(item, parsedImport.encryption, passwordState);
+        const fingerprint = createConfigFingerprint(item.url, resolvedApiKey);
+
+        if (knownFingerprints.has(fingerprint)) {
+            skippedDuplicateCount += 1;
+            continue;
+        }
+
+        const preferredName = String(item.name || '').trim() || guessProfileName(item.url, i);
+        const name = ensureUniqueProfileName(preferredName, existingNames);
         existingNames.add(name);
 
         let secretId = '';
-        if (item.apikey) {
+        if (resolvedApiKey) {
             const keyLabel = `${name} (${new Date().toLocaleString()})`;
-            secretId = String(await writeSecret(SECRET_KEYS.CUSTOM, item.apikey, keyLabel) || '');
+            secretId = String(await writeSecret(SECRET_KEYS.CUSTOM, resolvedApiKey, keyLabel) || '');
         }
 
         const profile = {
@@ -424,11 +711,17 @@ async function importOpenAiConfigsFromFile(file) {
 
         manager.profiles.push(profile);
         importedCount += 1;
+        knownFingerprints.add(fingerprint);
 
         await eventSource.emit(event_types.CONNECTION_PROFILE_CREATED, profile);
     }
 
     if (!importedCount) {
+        if (skippedDuplicateCount > 0) {
+            toastr.info(`未导入新配置：${skippedDuplicateCount} 条重复配置已跳过`);
+            return;
+        }
+
         toastr.warning('没有导入任何配置');
         return;
     }
@@ -437,7 +730,12 @@ async function importOpenAiConfigsFromFile(file) {
     refreshConnectionProfilesSelect();
     scheduleReinject();
 
-    toastr.success(`已导入 ${importedCount} 条 OpenAI 兼容配置`);
+    if (existingConfigs.unreadableSecretCount > 0) {
+        toastr.warning(`已导入 ${importedCount} 条，跳过 ${skippedDuplicateCount} 条重复。另有 ${existingConfigs.unreadableSecretCount} 条本地密钥不可读，去重可能不完整`);
+        return;
+    }
+
+    toastr.success(`已导入 ${importedCount} 条 OpenAI 兼容配置，跳过 ${skippedDuplicateCount} 条重复`);
 }
 
 function createToolbar() {
